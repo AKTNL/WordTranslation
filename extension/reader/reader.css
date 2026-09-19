@@ -1,0 +1,258 @@
+/* PaperDict Academic PDF Reader Styles */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background-color: #525659;
+  color: #1e293b;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Toolbar */
+.reader-toolbar {
+  height: 48px;
+  background-color: #323639;
+  color: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid #202224;
+  z-index: 100;
+  flex-shrink: 0;
+}
+
+.toolbar-left, .toolbar-center, .toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reader-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+}
+
+.brand-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.btn-file-open {
+  background: #2563eb;
+  color: #ffffff;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+}
+
+.btn-file-open:hover {
+  background: #1d4ed8;
+}
+
+.btn-file-open input {
+  display: none;
+}
+
+.doc-title {
+  font-size: 13px;
+  color: #94a3b8;
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-btn {
+  background: #474d52;
+  color: #f1f5f9;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.tool-btn:hover {
+  background: #5f666d;
+}
+
+.page-info {
+  font-size: 13px;
+  color: #cbd5e1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#page-num {
+  width: 44px;
+  height: 24px;
+  text-align: center;
+  background: #202224;
+  border: 1px solid #474d52;
+  color: #f8fafc;
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+}
+
+.zoom-text {
+  font-size: 12.5px;
+  color: #cbd5e1;
+  min-width: 45px;
+  text-align: center;
+}
+
+/* Welcome Dropzone */
+.welcome-screen {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.dropzone-box {
+  background: #ffffff;
+  border: 2px dashed #94a3b8;
+  border-radius: 16px;
+  padding: 40px 32px;
+  text-align: center;
+  max-width: 540px;
+  width: 100%;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+}
+
+.loading-spinner {
+  width: 44px;
+  height: 44px;
+  border: 4px solid #e2e8f0;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.dropzone-box.drag-over {
+  border-color: #2563eb;
+  background-color: #eff6ff;
+  transform: scale(1.02);
+}
+
+.dropzone-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.dropzone-box h2 {
+  font-size: 20px;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+.dropzone-box p {
+  font-size: 14px;
+  color: #64748b;
+  margin-bottom: 24px;
+}
+
+.feature-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.pill {
+  font-size: 12px;
+  background: #f1f5f9;
+  color: #334155;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+/* Viewer Container */
+.viewer-container {
+  flex: 1;
+  overflow-y: auto;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding: 20px 10px;
+}
+
+.pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+
+/* PDF Page Container */
+.pdf-page {
+  position: relative;
+  background-color: #ffffff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  margin: 0 auto;
+}
+
+.pdf-page canvas {
+  display: block;
+}
+
+/* Text Layer for Selection */
+.textLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  opacity: 1;
+  line-height: 1;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 2;
+}
+
+.textLayer span, .textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer ::selection {
+  background: rgba(37, 99, 235, 0.35);
+}

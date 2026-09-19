@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Agent harness & local cache
+.pi/
+
+# System & Editor
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

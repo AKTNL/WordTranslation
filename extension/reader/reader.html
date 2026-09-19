@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>PaperDict - 学术论文 PDF 阅读器</title>
+  <link rel="stylesheet" href="reader.css">
+</head>
+<body>
+  <!-- Top Navigation Toolbar -->
+  <header class="reader-toolbar">
+    <div class="toolbar-left">
+      <div class="logo-wrapper">
+        <img src="../icons/icon32.png" alt="Logo" class="reader-logo">
+        <span class="brand-title">PaperDict 阅读器</span>
+      </div>
+      <label class="btn-file-open" title="打开本地论文 PDF">
+        📁 打开论文 PDF
+        <input type="file" id="file-input" accept="application/pdf">
+      </label>
+      <span class="doc-title" id="doc-title">未加载文档</span>
+    </div>
+
+    <div class="toolbar-center" id="page-controls" style="display: none;">
+      <button id="btn-prev-page" class="tool-btn" title="上一页">◀</button>
+      <span class="page-info">
+        页码 <input type="number" id="page-num" value="1" min="1"> / <span id="page-count">-</span>
+      </span>
+      <button id="btn-next-page" class="tool-btn" title="下一页">▶</button>
+    </div>
+
+    <div class="toolbar-right" id="zoom-controls" style="display: none;">
+      <button id="btn-zoom-out" class="tool-btn" title="缩小">－</button>
+      <span id="zoom-value" class="zoom-text">100%</span>
+      <button id="btn-zoom-in" class="tool-btn" title="放大">＋</button>
+      <button id="btn-fit-width" class="tool-btn" title="适应页面宽度">适应宽度</button>
+    </div>
+  </header>
+
+  <!-- Empty / Dropzone Welcome Screen -->
+  <div id="welcome-dropzone" class="welcome-screen">
+    <div class="dropzone-box" id="dropzone-box">
+      <div class="dropzone-icon">📄</div>
+      <h2>拖拽学术论文 PDF 到这里阅读</h2>
+      <p>或点击上方“打开论文 PDF”选择文件</p>
+      <div class="feature-pills">
+        <span class="pill">⚡ 鼠标划词秒出释义</span>
+        <span class="pill">🧩 智能消除换行断词</span>
+        <span class="pill">🔊 真人语音发音</span>
+        <span class="pill">🌐 长难句整句翻译</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- PDF Main Viewer Container -->
+  <main id="viewer-container" class="viewer-container" style="display: none;">
+    <div id="pdf-viewer" class="pdf-viewer"></div>
+  </main>
+
+  <!-- PDF.js Libraries -->
+  <script src="lib/pdf.min.js"></script>
+  <!-- Dict & Content Script for Selection Translation -->
+  <script src="../dict/academic_dict.js"></script>
+  <script src="../dict_service.js"></script>
+  <script src="../content.js"></script>
+  <!-- Reader Controller -->
+  <script src="reader.js"></script>
+</body>
+</html>

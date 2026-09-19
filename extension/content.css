@@ -1,0 +1,243 @@
+/* PaperDict Floating Card - Shadow DOM Scoped Styles */
+
+:host {
+  all: initial;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1e293b;
+  box-sizing: border-box;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.paper-dict-card {
+  position: fixed !important;
+  width: 320px;
+  max-width: calc(100vw - 20px);
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px -4px rgba(15, 23, 42, 0.16), 0 4px 12px -2px rgba(15, 23, 42, 0.08);
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+  z-index: 2147483647 !important;
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+  transition: opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1), transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: auto;
+  user-select: text;
+  text-align: left;
+}
+
+.paper-dict-card.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+/* Header */
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px 8px;
+  background: #f8fafc;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.card-title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: 210px;
+}
+
+.word-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.phonetic-tag {
+  font-size: 12px;
+  font-family: 'Lucida Sans Unicode', 'Arial Unicode MS', sans-serif;
+  color: #64748b;
+  background: #e2e8f0;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #64748b;
+  transition: all 0.15s ease;
+  outline: none;
+}
+
+.action-btn:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.action-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+
+.action-btn.playing {
+  color: #2563eb;
+  animation: pulse 0.8s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+
+/* Body */
+.card-body {
+  padding: 12px 14px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.card-body::-webkit-scrollbar {
+  width: 5px;
+}
+.card-body::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.def-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.def-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.pos-tag {
+  font-size: 11px;
+  font-weight: 700;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.def-text {
+  color: #334155;
+  word-break: break-word;
+}
+
+.sentence-trans {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #1e293b;
+  word-break: break-word;
+}
+
+/* Inflection note */
+.inflection-hint {
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.inflection-hint span {
+  font-weight: 600;
+  color: #2563eb;
+}
+
+/* Loading & Spinner */
+.loading-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #e2e8f0;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Footer */
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px 8px;
+  background: #ffffff;
+  border-top: 1px solid #f8fafc;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.badge-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.badge-source.offline {
+  color: #059669;
+}
+.badge-source.online {
+  color: #2563eb;
+}
+
+.copy-hint {
+  color: #10b981;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.copy-hint.show {
+  opacity: 1;
+}

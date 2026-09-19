@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "UI components, Shadow DOM styling and DOM event isolation"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Chrome extension directory and module layout"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend performance and error handling standards"}

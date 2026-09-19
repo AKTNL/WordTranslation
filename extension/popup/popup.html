@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>PaperDict - 论文划词翻译助手</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="popup-header">
+      <div class="logo-group">
+        <img src="../icons/icon48.png" alt="PaperDict Logo" class="app-logo">
+        <div>
+          <h1 class="app-title">PaperDict</h1>
+          <p class="app-subtitle">论文划词翻译助手</p>
+        </div>
+      </div>
+      <span class="badge-status" id="badge-status">词库就绪</span>
+    </header>
+
+    <!-- PDF Detection Banner -->
+    <div id="pdf-detect-banner" class="pdf-detect-banner" style="display: none;">
+      <div class="banner-content">
+        <div class="banner-title">📄 当前标签页为 PDF 论文</div>
+        <div class="banner-desc">Chrome 自带内核拦截了直接划词，点击一键转入阅读器畅享秒查：</div>
+      </div>
+      <button id="btn-convert-current-pdf" class="btn-convert-pdf">
+        在 PaperDict 阅读器中打开 (开启划词即弹)
+      </button>
+    </div>
+
+    <!-- Quick Search Box -->
+    <section class="search-section">
+      <div class="search-input-wrapper">
+        <input type="text" id="search-input" placeholder="输入英文单词或论文句子..." autofocus autocomplete="off">
+        <button id="btn-search-clear" class="btn-clear" title="清空" style="display: none;">✕</button>
+        <button id="btn-search-go" class="btn-go" title="查询">→</button>
+      </div>
+
+      <!-- Quick Result Card -->
+      <div id="quick-result" class="quick-result-card" style="display: none;">
+        <div class="res-head">
+          <div class="res-title-group">
+            <span class="res-word" id="res-word"></span>
+            <span class="res-phonetic" id="res-phonetic"></span>
+          </div>
+          <div class="res-actions">
+            <button id="res-speaker" class="action-btn" title="朗读发音">
+              <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+            </button>
+            <button id="res-copy" class="action-btn" title="复制释义">
+              <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="res-body" id="res-body"></div>
+        <div class="res-footer">
+          <span class="res-source" id="res-source">● 离线学术词典</span>
+          <span class="res-copy-hint" id="res-copy-hint">已复制 √</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Settings Switch Toggles -->
+    <section class="settings-section">
+      <h2 class="section-title">功能开关</h2>
+
+      <div class="setting-item">
+        <div class="setting-info">
+          <span class="setting-label">划选即弹释义</span>
+          <span class="setting-desc">鼠标选中文本松开瞬间浮现释义卡片</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggle-enabled">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-info">
+          <span class="setting-label">自动在阅读器中打开 PDF</span>
+          <span class="setting-desc">访问论文 PDF 自动转入 PaperDict 开启划词</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggle-interceptpdf">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-info">
+          <span class="setting-label">智能拼接 PDF 连字符</span>
+          <span class="setting-desc">自动将跨行断词（如 hypo- thesis）合并</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggle-dehyphen">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-info">
+          <span class="setting-label">查词自动真人发音</span>
+          <span class="setting-desc">划选查词时自动播放标准美音发音</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggle-autoaudio">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-info">
+          <span class="setting-label">在线翻译长句兜底</span>
+          <span class="setting-desc">长句或本地未收录生词自动在线翻译</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggle-online">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Academic PDF Reader Entry -->
+    <section class="reader-entry-section">
+      <button id="btn-open-reader" class="btn-primary-block">
+        <svg viewBox="0 0 24 24" class="btn-icon"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+        打开学术 PDF 阅读器 (极速划译)
+      </button>
+    </section>
+
+    <!-- Tips / Help Notice -->
+    <footer class="popup-footer">
+      <div class="tip-card">
+        <span class="tip-icon">💡</span>
+        <div class="tip-text">
+          <strong>本地 PDF 划词技巧</strong>：若在 Chrome/Edge 打开本地下载的 PDF，需前往 <code>扩展管理</code> 页面勾选 <strong>“允许访问文件网址”</strong>。
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script src="../dict/academic_dict.js"></script>
+  <script src="../dict_service.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

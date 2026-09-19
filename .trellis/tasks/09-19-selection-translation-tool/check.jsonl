@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verification of performance, error handling, and memory leakage"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Extension background/content-script/popup message communication checks"}
