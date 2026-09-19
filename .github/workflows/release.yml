@@ -1,0 +1,75 @@
+name: Release PaperDict Extension
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run Extension Automated Tests
+        run: |
+          node tests/test_extension.js
+
+      - name: Package Extension into ZIP
+        run: |
+          VERSION=${GITHUB_REF_NAME:-v1.0.0}
+          echo "Packaging PaperDict for version: $VERSION"
+          cd extension
+          zip -r ../paperdict-${VERSION}.zip ./*
+          cd ..
+          ls -lh paperdict-*.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: paperdict-*.zip
+          name: PaperDict ${{ github.ref_name }} - 学术论文划词翻译助手
+          body: |
+            ### 📖 PaperDict ${{ github.ref_name }} 发布！
+
+            专为阅读英文学术论文（网页与 PDF）量身打造的轻量级“划词即翻”悬浮查词浏览器扩展。
+
+            ---
+
+            #### ✨ 核心特性
+            - ⚡ **划词即弹，毫秒秒出**：鼠标划选或双击生词，松手瞬间在单词右上角平滑浮现音标与中文释义。
+            - 📚 **内置 15,600+ 学术离线词典**：涵盖考研、四六级、GRE、TOEFL、IELTS、AWL 及高频计算机/学术词汇，断网秒查，**零配置，无需 API Key**。
+            - ✂️ **PDF 跨行连字符自动拼接**：自动消除双栏论文折行产生的连字符（如 `hypo-` 换行 `thesis` $\to$ `hypothesis`）。
+            - 🧩 **智能时态与词形还原**：自动识别并还原学术复数变形（`hypotheses` $\to$ `hypothesis`）与动词原型。
+            - 🔊 **真人语音标准发音**：点击小喇叭即刻播放纯正英语发音。
+            - 🌐 **在线长难句整句翻译**：遇到长句或生僻句自动调用翻译引擎兜底。
+            - 🛡️ **Shadow DOM 样式物理隔离**：悬浮卡片不受任何学术网站（IEEE、arXiv、Nature 等）原有 CSS 样式污染。
+            - 📄 **内置专属学术 PDF 阅读器**：将本地 PDF 拖入即可开启极致流畅的全文划词翻译体验。
+
+            ---
+
+            #### 🚀 极速安装步骤（Chrome / Edge 通用）
+            1. 下载下方的 **`paperdict-${{ github.ref_name }}.zip`** 资源文件。
+            2. 将下载的 ZIP 压缩包**解压到电脑任意文件夹**。
+            3. 打开浏览器扩展管理页面：
+               - Chrome 访问：`chrome://extensions/`
+               - Edge 访问：`edge://extensions/`
+            4. 打开右上角（或左下角）的 **「开发者模式」**。
+            5. 点击 **「加载已解压的扩展程序」**（Load unpacked），选择刚才解压出来的文件夹即可开始使用！
+            6. *(提示)* 若需直接在浏览器打开本地下载的 PDF 划词，请在扩展详细信息中勾选 **「允许访问文件网址」**。
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -7,6 +7,7 @@
 [![Chromium Compatible](https://img.shields.io/badge/Chromium-Edge%20%7C%20Chrome%20%7C%20Brave-brightgreen?style=flat-square&logo=microsoftedge)](https://www.google.com/chrome/)
 [![Offline Dictionary](https://img.shields.io/badge/Offline%20Dict-15%2C600%2B%20Words-orange?style=flat-square)](https://github.com/AKTNL/WordTranslation)
 [![Zero Config](https://img.shields.io/badge/API%20Key-Zero%20Config%20Required-success?style=flat-square)](#)
+[![GitHub release](https://img.shields.io/github/v/release/AKTNL/WordTranslation?color=blue&style=flat-square)](https://github.com/AKTNL/WordTranslation/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 </div>
@@ -65,7 +66,14 @@
 
 PaperDict 采用原生 JavaScript 实现，**零构建依赖**，代码透明清晰，直接加载即可使用。
 
-### 1. 下载或克隆仓库
+### 方式一：直接下载安装包（最推荐，小白友好 ⭐⭐⭐⭐⭐）
+1. 前往 GitHub 的 **[Releases 最新发布页](https://github.com/AKTNL/WordTranslation/releases)**。
+2. 下载最新的 **`paperdict-v*.zip`** 压缩包，并解压到你的电脑中。
+3. 参考下文在 Chrome 或 Edge 中加载解压后的文件夹即可！
+
+---
+
+### 方式二：通过 Git 克隆源码使用
 ```bash
 git clone https://github.com/AKTNL/WordTranslation.git
 ```
