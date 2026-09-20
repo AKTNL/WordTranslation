@@ -124,6 +124,12 @@
       if (!text || typeof text !== 'string') return '';
       let cleaned = text;
 
+      // Normalize typographic quotes and dashes
+      cleaned = cleaned
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/[\u2013\u2014]/g, '-');
+
       if (deHyphen) {
         // Match word ending with hyphen, followed by optional whitespace/newlines, followed by word
         cleaned = cleaned.replace(/([a-zA-Z]+)-\s*[\r\n]+\s*([a-zA-Z]+)/g, '$1$2');
@@ -134,9 +140,17 @@
       // Collapse multiple spaces
       cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
-      // If it's a single word with punctuation attached, clean outer punctuation
-      if (!cleaned.includes(' ')) {
-        cleaned = cleaned.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '');
+      // Trim leading punctuation
+      cleaned = cleaned.replace(/^[\s"'(\[{<«».,;:!?\-—–]+/, '');
+
+      // Trailing punctuation: if short phrase (<= 4 words), strip trailing periods/commas/punctuation
+      // If long sentence (>= 5 words ending with period), preserve the period!
+      const words = cleaned.split(/\s+/);
+      if (words.length <= 4) {
+        cleaned = cleaned.replace(/[\s"')}\]>«».,;:!?\-—–]+$/, '');
+      } else {
+        cleaned = cleaned.replace(/[\s"')}\]>«»;:!?\-—–]+$/, '');
+        cleaned = cleaned.replace(/,+$/, '');
       }
 
       return cleaned;
@@ -149,7 +163,8 @@
     isLookupEligible(text) {
       if (!text) return false;
       const t = text.trim();
-      if (t.length === 0 || t.length > 500) return false;
+      // Filter out empty, single character (variables like x, y), or excessively long selections
+      if (t.length <= 1 || t.length > 500) return false;
 
       // Pure numbers or version/citation like [1], 2024, 3.14
       if (/^(\d+|\[\d+\]|\d+\.\d+[%]?)$/.test(t)) return false;
@@ -157,17 +172,25 @@
       // Pure symbols / code tokens
       if (/^[{}()\[\]<>+=/\\*&^%$#@!~`|;:'",.?_-]+$/.test(t)) return false;
 
+      // Filter out dominant Chinese text (e.g. user selected a Chinese sentence with 1-2 English acronyms)
+      const zhMatches = t.match(/[\u4e00-\u9fa5]/g);
+      if (zhMatches && zhMatches.length >= 2) return false;
+
+      // Filter out programming statements and code structures
+      if (/\b(for|while|if|else|return|function|const|let|var|class|import|from|def)\s*[\(\{]/.test(t)) return false;
+      if (/(?:=>|===|!==|\+\+|--|;\s*$)/.test(t)) return false;
+
       // Has at least one letter
       return /[a-zA-Z]/.test(t);
     }
 
     /**
-     * Check if text is a single English word
+     * Check if text is a single English word (optionally with hyphen or apostrophe)
      */
     isSingleWord(text) {
       if (!text) return false;
       const trimmed = text.trim();
-      return /^[a-zA-Z]+(-[a-zA-Z]+)*$/.test(trimmed);
+      return /^[a-zA-Z]+([-'’][a-zA-Z]+)*'?$/.test(trimmed);
     }
 
     /**
@@ -228,6 +251,20 @@
     generateCandidates(w) {
       const list = [];
       const len = w.length;
+
+      // Possessive 's / ’s (e.g. model's -> model, authors' -> author)
+      if ((w.endsWith("'s") || w.endsWith("’s")) && len > 3) {
+        const base = w.slice(0, -2);
+        list.push(base);
+        // Also reduce base further if plural, e.g. models' -> model
+        if (base.endsWith('s') && !base.endsWith('ss') && base.length > 2) {
+          list.push(base.slice(0, -1));
+        }
+      }
+      if ((w.endsWith("s'") || w.endsWith("s’")) && len > 3) {
+        list.push(w.slice(0, -1));
+        list.push(w.slice(0, -2));
+      }
 
       // -ies -> -y (e.g. categories -> category, variables -> variable)
       if (w.endsWith('ies') && len > 4) {

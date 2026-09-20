@@ -1,7 +1,8 @@
 /**
  * PaperDict - Academic PDF Reader Controller
- * Uses PDF.js to render PDF pages and selectable text layers.
- * Seamlessly integrates with PaperDict's Shadow DOM selection translation.
+ * High-performance PDF reader with on-demand viewport lazy rendering,
+ * two-column academic paper paragraph extraction, smooth zoom with reading position preservation,
+ * and seamless Shadow DOM selection translation.
  */
 
 (function () {
@@ -47,6 +48,8 @@
   let currentPage = 1;
   let currentBilingualMode = 'original'; // 'original' | 'bilingual' | 'chinese'
   const pageParagraphsMap = new Map(); // pageNumber -> [{ orig, trans, pDiv, transDiv }]
+  const renderedPagesSet = new Set(); // pageNumber set
+  let pageLazyObserver = null;
   let bilingualObserver = null;
 
   // File loading
@@ -97,7 +100,7 @@
     reader.readAsArrayBuffer(file);
   }
 
-  // Load PDF from URL (e.g. arXiv, online PDF, or web link)
+  // Load PDF from URL
   async function loadPdfFromUrl(url) {
     if (!url) return;
     try {
@@ -120,7 +123,6 @@
         </div>
       `;
 
-      // Fetch PDF data
       const response = await fetch(decodedUrl);
       if (!response.ok) {
         throw new Error(`无法获取 PDF (HTTP ${response.status})`);
@@ -166,6 +168,7 @@
     }
   }
 
+  // Render PDF with On-Demand Viewport Virtualization
   async function renderPdf(data) {
     try {
       welcomeDropzone.style.display = 'none';
@@ -176,6 +179,7 @@
 
       pdfViewer.innerHTML = '';
       pageParagraphsMap.clear();
+      renderedPagesSet.clear();
 
       const loadingTask = pdfjsLib.getDocument({ data });
       currentPdfDoc = await loadingTask.promise;
@@ -185,30 +189,115 @@
 
       updateZoomDisplay();
 
-      // Render all pages
+      // Estimate initial dimensions from Page 1
+      const samplePage = await currentPdfDoc.getPage(1);
+      const sampleViewport = samplePage.getViewport({ scale: currentScale });
+      const estWidth = Math.floor(sampleViewport.width);
+      const estHeight = Math.floor(sampleViewport.height);
+
+      // Create on-demand page placeholders
       for (let i = 1; i <= totalPages; i++) {
-        await renderPage(i);
+        createPagePlaceholder(i, estWidth, estHeight);
       }
+
+      // Setup lazy page rendering observer
+      setupPageLazyObserver();
+
+      // Setup bilingual translation observer
+      setupBilingualObserver();
+
+      // Immediately render first visible pages
+      await renderPage(1);
+      if (totalPages >= 2) renderPage(2);
     } catch (err) {
       console.error('Failed to load PDF:', err);
       alert('加载 PDF 失败: ' + err.message);
     }
   }
 
-  async function renderPage(pageNumber) {
-    const page = await currentPdfDoc.getPage(pageNumber);
-    const viewport = page.getViewport({ scale: currentScale });
+  function createPagePlaceholder(pageNumber, width, height) {
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'pdf-page-row';
+    rowDiv.id = `pdf-row-${pageNumber}`;
+    rowDiv.dataset.pageNumber = pageNumber;
 
-    // Page wrapper
     const pageDiv = document.createElement('div');
     pageDiv.className = 'pdf-page';
     pageDiv.id = `pdf-page-${pageNumber}`;
     pageDiv.dataset.pageNumber = pageNumber;
+    pageDiv.style.width = `${width}px`;
+    pageDiv.style.height = `${height}px`;
+
+    // Canvas placeholder
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    pageDiv.appendChild(canvas);
+
+    // Text layer placeholder
+    const textLayerDiv = document.createElement('div');
+    textLayerDiv.className = 'textLayer';
+    textLayerDiv.style.width = `${width}px`;
+    textLayerDiv.style.height = `${height}px`;
+    pageDiv.appendChild(textLayerDiv);
+
+    rowDiv.appendChild(pageDiv);
+
+    // Bilingual side panel
+    const bilingualPanel = document.createElement('div');
+    bilingualPanel.className = `pdf-page-bilingual ${currentBilingualMode === 'chinese' ? 'full-chinese' : ''}`;
+    bilingualPanel.id = `pdf-bilingual-${pageNumber}`;
+    bilingualPanel.style.display = currentBilingualMode === 'original' ? 'none' : 'block';
+    bilingualPanel.style.minHeight = `${height}px`;
+    rowDiv.appendChild(bilingualPanel);
+
+    pdfViewer.appendChild(rowDiv);
+  }
+
+  function setupPageLazyObserver() {
+    if (pageLazyObserver) pageLazyObserver.disconnect();
+    if (typeof IntersectionObserver === 'undefined') return;
+
+    pageLazyObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          const pNum = parseInt(entry.target.dataset.pageNumber, 10);
+          if (pNum && !renderedPagesSet.has(pNum)) {
+            renderPage(pNum);
+          }
+        }
+      }
+    }, {
+      root: viewerContainer,
+      rootMargin: '500px 0px 500px 0px',
+      threshold: 0.01
+    });
+
+    const rows = document.querySelectorAll('.pdf-page-row');
+    rows.forEach(r => pageLazyObserver.observe(r));
+  }
+
+  async function renderPage(pageNumber) {
+    if (!currentPdfDoc || pageNumber < 1 || pageNumber > totalPages) return;
+    renderedPagesSet.add(pageNumber);
+
+    const page = await currentPdfDoc.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: currentScale });
+
+    const pageDiv = document.getElementById(`pdf-page-${pageNumber}`);
+    const rowDiv = document.getElementById(`pdf-row-${pageNumber}`);
+    const bilingualPanel = document.getElementById(`pdf-bilingual-${pageNumber}`);
+    if (!pageDiv || !rowDiv) return;
+
     pageDiv.style.width = `${Math.floor(viewport.width)}px`;
     pageDiv.style.height = `${Math.floor(viewport.height)}px`;
+    if (bilingualPanel) {
+      bilingualPanel.style.minHeight = `${Math.floor(viewport.height)}px`;
+    }
 
-    // Canvas
-    const canvas = document.createElement('canvas');
+    const canvas = pageDiv.querySelector('canvas') || document.createElement('canvas');
     const context = canvas.getContext('2d');
     const outputScale = window.devicePixelRatio || 1;
 
@@ -225,32 +314,19 @@
       viewport: viewport
     };
 
-    pageDiv.appendChild(canvas);
+    if (!canvas.parentElement) pageDiv.appendChild(canvas);
 
-    // Text layer for selectable text & selection translation
-    const textLayerDiv = document.createElement('div');
-    textLayerDiv.className = 'textLayer';
+    // Text layer
+    let textLayerDiv = pageDiv.querySelector('.textLayer');
+    if (!textLayerDiv) {
+      textLayerDiv = document.createElement('div');
+      textLayerDiv.className = 'textLayer';
+      pageDiv.appendChild(textLayerDiv);
+    }
+    textLayerDiv.innerHTML = '';
     textLayerDiv.style.width = `${Math.floor(viewport.width)}px`;
     textLayerDiv.style.height = `${Math.floor(viewport.height)}px`;
     textLayerDiv.style.setProperty('--scale-factor', viewport.scale);
-    pageDiv.appendChild(textLayerDiv);
-
-    // Row wrapper for side-by-side bilingual reading
-    const rowDiv = document.createElement('div');
-    rowDiv.className = 'pdf-page-row';
-    rowDiv.id = `pdf-row-${pageNumber}`;
-    rowDiv.dataset.pageNumber = pageNumber;
-    rowDiv.appendChild(pageDiv);
-
-    // Bilingual side panel
-    const bilingualPanel = document.createElement('div');
-    bilingualPanel.className = `pdf-page-bilingual ${currentBilingualMode === 'chinese' ? 'full-chinese' : ''}`;
-    bilingualPanel.id = `pdf-bilingual-${pageNumber}`;
-    bilingualPanel.style.display = currentBilingualMode === 'original' ? 'none' : 'block';
-    bilingualPanel.style.minHeight = `${Math.floor(viewport.height)}px`;
-    rowDiv.appendChild(bilingualPanel);
-
-    pdfViewer.appendChild(rowDiv);
 
     // Render canvas
     await page.render(renderContext).promise;
@@ -265,11 +341,8 @@
     });
 
     // Extract & cluster paragraphs for bilingual rendering
-    setupPageBilingualContent(pageNumber, textContent, bilingualPanel);
-
-    // Observe row for viewport lazy translation
-    if (bilingualObserver) {
-      bilingualObserver.observe(rowDiv);
+    if (bilingualPanel && !pageParagraphsMap.has(pageNumber)) {
+      setupPageBilingualContent(pageNumber, textContent, bilingualPanel);
     }
   }
 
@@ -284,7 +357,7 @@
       return;
     }
 
-    paras.forEach((pText, idx) => {
+    paras.forEach((pText) => {
       const pDiv = document.createElement('div');
       pDiv.className = 'pdf-bilingual-p';
 
@@ -311,27 +384,83 @@
 
     pageParagraphsMap.set(pageNumber, paraItems);
 
-    // If currently in bilingual/chinese mode and page is visible, start translation
     if (currentBilingualMode !== 'original' && pageNumber === currentPage) {
       translatePageParagraphs(pageNumber);
     }
   }
 
+  // Academic Two-Column & Multi-Column Aware Paragraph Clustering
   function clusterPdfTextIntoParagraphs(textContent) {
     if (!textContent || !textContent.items || textContent.items.length === 0) {
       return [];
     }
 
-    // Group items into lines
+    const rawItems = textContent.items.filter(item => item.str && item.str.trim().length > 0);
+    if (rawItems.length === 0) return [];
+
+    // Analyze X coordinates for column separation
+    const xs = rawItems.map(it => (it.transform ? it.transform[4] : 0));
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const midX = (minX + maxX) / 2;
+
+    const leftCol = [];
+    const rightCol = [];
+    const fullSpan = [];
+
+    for (const item of rawItems) {
+      const x = item.transform ? item.transform[4] : 0;
+      const strLen = item.str ? item.str.length : 0;
+      const width = item.width || (strLen * 6.5);
+
+      if (x < midX - 25 && (x + width) < midX + 25) {
+        leftCol.push(item);
+      } else if (x > midX - 10) {
+        rightCol.push(item);
+      } else {
+        fullSpan.push(item);
+      }
+    }
+
+    // Determine if page has two distinct columns
+    const isTwoColumn = leftCol.length > 20 && rightCol.length > 20;
+
+    if (isTwoColumn) {
+      const fullParas = clusterItemsToParagraphs(fullSpan);
+      const leftParas = clusterItemsToParagraphs(leftCol);
+      const rightParas = clusterItemsToParagraphs(rightCol);
+      return [...fullParas, ...leftParas, ...rightParas];
+    }
+
+    return clusterItemsToParagraphs(rawItems);
+  }
+
+  function isDifferentLine(y1, y2, tolerance = 3.5) {
+    return y1 === null || Math.abs(y1 - y2) > tolerance;
+  }
+
+  function clusterItemsToParagraphs(items) {
+    if (!items || items.length === 0) return [];
+
+    // Sort items by Y (top to bottom), then X (left to right)
+    const sorted = [...items].sort((a, b) => {
+      const ya = a.transform ? a.transform[5] : 0;
+      const yb = b.transform ? b.transform[5] : 0;
+      if (Math.abs(ya - yb) <= 3) {
+        const xa = a.transform ? a.transform[4] : 0;
+        const xb = b.transform ? b.transform[4] : 0;
+        return xa - xb;
+      }
+      return yb - ya; // Higher Y is earlier in PDF coordinates
+    });
+
     const lines = [];
     let currentLine = [];
     let currentY = null;
 
-    const items = textContent.items.filter(item => item.str && item.str.trim().length > 0);
-
-    for (const item of items) {
+    for (const item of sorted) {
       const y = item.transform ? Math.round(item.transform[5]) : 0;
-      if (currentY === null || Math.abs(y - currentY) > 3) {
+      if (isDifferentLine(currentY, y)) {
         if (currentLine.length > 0) {
           lines.push({ y: currentY, text: currentLine.map(i => i.str).join(' ').trim() });
         }
@@ -345,7 +474,6 @@
       lines.push({ y: currentY, text: currentLine.map(i => i.str).join(' ').trim() });
     }
 
-    // Cluster lines into paragraphs
     const paragraphs = [];
     let currentPara = [];
 
@@ -422,7 +550,17 @@
           item.transDiv.innerHTML = finalText;
           item.status = 'done';
         } else {
-          item.transDiv.innerHTML = `<span style="color:#f87171;font-size:12px;">(翻译超时，请稍后重试)</span>`;
+          item.transDiv.innerHTML = `
+            <span style="color:#f87171;font-size:12px;">(翻译超时，请稍后重试)</span>
+            <button class="pdf-btn-retry" style="margin-left:6px;padding:1px 5px;font-size:11px;background:#334155;border:1px solid #475569;border-radius:3px;color:#93c5fd;cursor:pointer;">重试</button>
+          `;
+          const btnR = item.transDiv.querySelector('.pdf-btn-retry');
+          if (btnR) {
+            btnR.onclick = () => {
+              item.status = 'idle';
+              translatePageParagraphs(pageNumber);
+            };
+          }
           item.status = 'idle';
         }
       } catch (e) {
@@ -440,7 +578,6 @@
   function setReaderBilingualMode(mode) {
     currentBilingualMode = mode;
 
-    // Update buttons
     if (btnModeOrig) btnModeOrig.classList.toggle('active', mode === 'original');
     if (btnModeBi) btnModeBi.classList.toggle('active', mode === 'bilingual');
     if (btnModeZh) btnModeZh.classList.toggle('active', mode === 'chinese');
@@ -458,7 +595,6 @@
       }
     }
 
-    // Update all page bilingual panels
     const panels = document.querySelectorAll('.pdf-page-bilingual');
     panels.forEach((p) => {
       if (mode === 'original') {
@@ -470,13 +606,14 @@
     });
 
     if (mode !== 'original') {
-      // Trigger translation for currently visible page
       translatePageParagraphs(currentPage);
     }
   }
 
-  // Setup Viewport IntersectionObserver for lazy translating PDF pages
-  if (typeof IntersectionObserver !== 'undefined') {
+  function setupBilingualObserver() {
+    if (bilingualObserver) bilingualObserver.disconnect();
+    if (typeof IntersectionObserver === 'undefined') return;
+
     bilingualObserver = new IntersectionObserver((entries) => {
       if (currentBilingualMode === 'original') return;
       for (const entry of entries) {
@@ -492,6 +629,9 @@
       rootMargin: '200px 0px 200px 0px',
       threshold: 0.05
     });
+
+    const rows = document.querySelectorAll('.pdf-page-row');
+    rows.forEach(r => bilingualObserver.observe(r));
   }
 
   // Bind Mode Buttons
@@ -516,27 +656,32 @@
     zoomValueSpan.textContent = `${Math.round(currentScale * 100)}%`;
   }
 
-  async function reRenderAll() {
+  // Smooth Zoom with Reading Position Preservation (Never clear DOM)
+  async function applyZoomWithPreservation() {
     if (!currentPdfDoc) return;
-    pdfViewer.innerHTML = '';
-    for (let i = 1; i <= totalPages; i++) {
-      await renderPage(i);
+    const targetPage = currentPage;
+    updateZoomDisplay();
+
+    // Re-render currently rendered pages at new scale
+    for (const pNum of Array.from(renderedPagesSet)) {
+      await renderPage(pNum);
     }
+
+    // Smoothly restore reading position
+    scrollToPage(targetPage);
   }
 
   // Zoom buttons
   btnZoomIn.addEventListener('click', () => {
     if (currentScale >= 3.0) return;
     currentScale = Math.min(3.0, currentScale + 0.15);
-    updateZoomDisplay();
-    reRenderAll();
+    applyZoomWithPreservation();
   });
 
   btnZoomOut.addEventListener('click', () => {
     if (currentScale <= 0.6) return;
     currentScale = Math.max(0.6, currentScale - 0.15);
-    updateZoomDisplay();
-    reRenderAll();
+    applyZoomWithPreservation();
   });
 
   btnFitWidth.addEventListener('click', async () => {
@@ -545,8 +690,7 @@
     const unscaledViewport = firstPage.getViewport({ scale: 1.0 });
     const availableWidth = viewerContainer.clientWidth - 48;
     currentScale = Math.max(0.6, Math.min(2.5, availableWidth / unscaledViewport.width));
-    updateZoomDisplay();
-    reRenderAll();
+    applyZoomWithPreservation();
   });
 
   // Page navigation
