@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 1. Load Settings
   const defaultSettings = {
     enabled: true,
-    triggerMode: 'icon',
+    triggerMode: 'direct',
     deHyphen: true,
     autoAudio: false,
     onlineFallback: true,
@@ -123,7 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (toggleInterceptPdf) toggleInterceptPdf.checked = items.autoInterceptPdf === true;
     if (toggleDefaultBilingual) toggleDefaultBilingual.checked = items.bilingualDefault === true;
     if (toggleCapsule) toggleCapsule.checked = items.capsuleEnabled !== false;
-    if (selectTriggerMode) selectTriggerMode.value = items.triggerMode || 'icon';
+    if (selectTriggerMode) selectTriggerMode.value = items.triggerMode || 'direct';
 
     // API settings
     if (selectCustomEngine) selectCustomEngine.value = items.customEngine || 'default';

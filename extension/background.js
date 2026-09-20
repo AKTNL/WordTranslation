@@ -7,7 +7,7 @@
 // Default settings
 const DEFAULT_SETTINGS = {
   enabled: true,
-  triggerMode: 'icon', // 'icon' | 'direct' | 'modifier'
+  triggerMode: 'direct', // 'direct' (default) | 'icon' | 'modifier'
   modifierKey: 'Alt',
   deHyphen: true,
   autoAudio: false,

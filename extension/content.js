@@ -19,7 +19,7 @@
   // Default configuration
   let settings = {
     enabled: true,
-    triggerMode: 'icon', // 'icon' | 'direct' | 'modifier'
+    triggerMode: 'direct', // 'direct' (default) | 'icon' | 'modifier'
     modifierKey: 'Alt',  // 'Alt' | 'Control' | 'Shift'
     deHyphen: true,
     autoAudio: false,
@@ -912,7 +912,7 @@
     }
 
     // Check Trigger Mode
-    const mode = settings.triggerMode || 'icon';
+    const mode = settings.triggerMode || 'direct';
 
     if (mode === 'modifier') {
       const requiredKey = settings.modifierKey || 'Alt';
