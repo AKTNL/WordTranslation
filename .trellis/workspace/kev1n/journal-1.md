@@ -51,3 +51,36 @@
   - `test-paper.html`：新增 LaTeX、KaTeX、MathML、Python 代码块与参考文献区，全方位验证公式保护与智能过滤。
   - `tests/test_extension.js`：新增 `FormulaProtector` 与 `AcademicFilter` 单元测试，测试用例扩充至 52 项且全部通过。
 - 更新 `README.md`：详细记录 Phase 2 核心特性、使用场景、快捷键与全新架构图。
+
+
+## Session 1: PaperDict Phase 2 Quality Verification & Bug Fixes
+
+**Date**: 2026-09-20
+**Task**: PaperDict Phase 2 Quality Verification & Bug Fixes
+**Branch**: `main`
+
+### Summary
+
+Fixed formula-currency collisions in FormulaProtector, enhanced observer teardown and queue cleanup on original view restore, prevented duplicate capsule in reader.html, and validated test suite passing 68/68 tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `33d49ac` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
