@@ -1,7 +1,12 @@
 /**
  * PaperDict - Content Script
  * Injected into academic web pages and browser PDF views.
- * Renders an isolated Shadow DOM popup on text selection.
+ * Renders an isolated Shadow DOM popup on text selection with:
+ * - Choice of trigger modes: Lightweight floating icon (default), direct popup, or modifier key (Alt/Ctrl)
+ * - Draggable card and Pin (钉住) support
+ * - Add to vocabulary (生词本) and search history tracking
+ * - Domain blacklist support
+ * - Full Dark Mode support
  */
 
 (function () {
@@ -14,10 +19,20 @@
   // Default configuration
   let settings = {
     enabled: true,
+    triggerMode: 'direct', // 'direct' (default) | 'icon' | 'modifier'
+    modifierKey: 'Alt',  // 'Alt' | 'Control' | 'Shift'
     deHyphen: true,
     autoAudio: false,
-    onlineFallback: true
+    onlineFallback: true,
+    blacklist: []
   };
+
+  const currentHost = (typeof window !== 'undefined' && window.location && window.location.hostname) ? window.location.hostname : '';
+
+  function isBlacklisted() {
+    if (!settings.blacklist || !Array.isArray(settings.blacklist)) return false;
+    return settings.blacklist.some(domain => domain && (currentHost === domain || currentHost.endsWith('.' + domain)));
+  }
 
   // Load settings from storage
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
@@ -43,16 +58,23 @@
   const ICONS = {
     speaker: `<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>`,
     copy: `<svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>`,
-    close: `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`
+    close: `<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`,
+    star: `<svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>`,
+    starFilled: `<svg viewBox="0 0 24 24"><path fill="#f59e0b" d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>`,
+    pin: `<svg viewBox="0 0 24 24"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5v6l1 1 1-1v-6h5v-2l-2-2z"/></svg>`
   };
 
-  // Shadow DOM Host
+  // Shadow DOM Host & State
   let hostEl = null;
   let shadowRoot = null;
   let cardEl = null;
+  let triggerIconEl = null;
   let currentAudio = null;
   let activeQuery = '';
   let activeTransText = '';
+  let pendingSelectionData = null;
+  let isPinned = false;
+  let currentWordData = null;
 
   // Create isolated Shadow DOM
   function setupShadowDOM() {
@@ -81,6 +103,40 @@
         box-sizing: border-box;
       }
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      /* Floating Trigger Icon */
+      .paper-dict-trigger-btn {
+        position: fixed !important;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #2563eb, #1d4ed8);
+        color: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 13px;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35), 0 2px 4px rgba(0,0,0,0.1);
+        cursor: pointer;
+        z-index: 2147483647 !important;
+        pointer-events: auto;
+        opacity: 0;
+        transform: scale(0.7);
+        transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+        border: 2px solid #ffffff;
+        user-select: none;
+      }
+      .paper-dict-trigger-btn.visible {
+        opacity: 1;
+        transform: scale(1);
+      }
+      .paper-dict-trigger-btn:hover {
+        transform: scale(1.12);
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.45);
+      }
+
+      /* Floating Card */
       .paper-dict-card {
         position: fixed !important;
         width: 320px;
@@ -109,13 +165,15 @@
         padding: 10px 14px 8px;
         background: #f8fafc;
         border-bottom: 1px solid #f1f5f9;
+        cursor: move; /* Draggable handle */
+        user-select: none;
       }
       .card-title-group {
         display: flex;
         align-items: baseline;
         gap: 8px;
         flex-wrap: wrap;
-        max-width: 210px;
+        max-width: 190px;
       }
       .word-title {
         font-size: 16px;
@@ -134,14 +192,14 @@
       .header-actions {
         display: flex;
         align-items: center;
-        gap: 4px;
+        gap: 3px;
       }
       .action-btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 26px;
-        height: 26px;
+        width: 25px;
+        height: 25px;
         border-radius: 6px;
         background: transparent;
         border: none;
@@ -153,6 +211,13 @@
       .action-btn:hover {
         background: #e2e8f0;
         color: #1e293b;
+      }
+      .action-btn.active-pinned {
+        color: #2563eb;
+        background: #eff6ff;
+      }
+      .action-btn.active-starred {
+        color: #f59e0b;
       }
       .action-btn svg {
         width: 15px;
@@ -253,13 +318,62 @@
         transition: opacity 0.2s ease;
       }
       .copy-hint.show { opacity: 1; }
+
+      /* Dark Mode Adaptations */
+      @media (prefers-color-scheme: dark) {
+        .paper-dict-card {
+          background: #0f172a;
+          border-color: #334155;
+          color: #f1f5f9;
+          box-shadow: 0 12px 32px -4px rgba(0, 0, 0, 0.5), 0 4px 12px -2px rgba(0, 0, 0, 0.3);
+        }
+        .card-header {
+          background: #1e293b;
+          border-bottom-color: #334155;
+        }
+        .word-title { color: #f8fafc; }
+        .phonetic-tag { background: #334155; color: #94a3b8; }
+        .action-btn { color: #94a3b8; }
+        .action-btn:hover { background: #334155; color: #f8fafc; }
+        .action-btn.active-pinned { background: #1e3a8a; color: #60a5fa; }
+        .card-footer {
+          background: #0f172a;
+          border-top-color: #1e293b;
+        }
+        .def-text { color: #cbd5e1; }
+        .sentence-trans { color: #f1f5f9; }
+        .pos-tag {
+          background: #1e3a8a;
+          border-color: #2563eb;
+          color: #93c5fd;
+        }
+        .card-body::-webkit-scrollbar-thumb { background: #475569; }
+      }
     `;
 
     shadowRoot.appendChild(style);
 
+    // Create trigger icon
+    triggerIconEl = document.createElement('div');
+    triggerIconEl.className = 'paper-dict-trigger-btn';
+    triggerIconEl.id = 'paper-dict-trigger-btn';
+    triggerIconEl.title = 'PaperDict 查词';
+    triggerIconEl.textContent = 'P';
+    shadowRoot.appendChild(triggerIconEl);
+
+    // Create card element
     cardEl = document.createElement('div');
     cardEl.className = 'paper-dict-card';
     shadowRoot.appendChild(cardEl);
+
+    // Bind trigger icon click
+    triggerIconEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hideTriggerIcon();
+      if (pendingSelectionData) {
+        executeLookup(pendingSelectionData.text, pendingSelectionData.rect);
+      }
+    });
 
     const target = document.body || document.documentElement;
     if (target) {
@@ -268,6 +382,53 @@
       document.addEventListener('DOMContentLoaded', () => {
         (document.body || document.documentElement).appendChild(hostEl);
       });
+    }
+
+    bindCardDrag();
+  }
+
+  // Draggable Card functionality (card-drag / isDraggingCard)
+  function bindCardDrag() {
+    let isDraggingCard = false;
+    let startX = 0;
+    let startY = 0;
+    let initialLeft = 0;
+    let initialTop = 0;
+
+    const onMouseDown = (e) => {
+      const header = shadowRoot ? shadowRoot.querySelector('.card-header') : null;
+      if (!header || !e.composedPath().includes(header)) return;
+      if (e.target.closest && e.target.closest('.action-btn')) return;
+
+      isDraggingCard = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = cardEl.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+
+      const onMouseMove = (moveEv) => {
+        if (!isDraggingCard) return;
+        const dx = moveEv.clientX - startX;
+        const dy = moveEv.clientY - startY;
+        const newLeft = Math.max(10, Math.min(window.innerWidth - cardEl.offsetWidth - 10, initialLeft + dx));
+        const newTop = Math.max(10, Math.min(window.innerHeight - cardEl.offsetHeight - 10, initialTop + dy));
+        cardEl.style.left = `${Math.round(newLeft)}px`;
+        cardEl.style.top = `${Math.round(newTop)}px`;
+      };
+
+      const onMouseUp = () => {
+        isDraggingCard = false;
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+      };
+
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+    };
+
+    if (shadowRoot) {
+      shadowRoot.addEventListener('mousedown', onMouseDown);
     }
   }
 
@@ -316,14 +477,38 @@
     });
   }
 
-  // Hide popup card
-  function hideCard() {
+  function showTriggerIcon(rect) {
+    setupShadowDOM();
+    if (!triggerIconEl) return;
+
+    let left = rect.right + 6;
+    let top = rect.top - 18;
+
+    if (left + 32 > window.innerWidth - 10) {
+      left = rect.left - 32;
+    }
+    if (top < 10) {
+      top = rect.bottom + 6;
+    }
+
+    triggerIconEl.style.left = `${Math.round(left)}px`;
+    triggerIconEl.style.top = `${Math.round(top)}px`;
+    triggerIconEl.classList.add('visible');
+  }
+
+  function hideTriggerIcon() {
+    if (triggerIconEl) {
+      triggerIconEl.classList.remove('visible');
+    }
+  }
+
+  function hideCard(force = false) {
+    if (isPinned && !force) return;
     if (cardEl) {
       cardEl.classList.remove('visible');
     }
   }
 
-  // Smart positioning calculation near selected text (Viewport relative)
   function positionCard(rect) {
     if (!cardEl) return;
 
@@ -332,11 +517,9 @@
     const winWidth = window.innerWidth;
     const winHeight = window.innerHeight;
 
-    // Center horizontally aligned with selection
     let left = rect.left + (rect.width / 2) - (cardWidth / 2);
     let top = rect.bottom + 8;
 
-    // Vertical boundary check: if overflow bottom, place above
     if (top + cardHeight > winHeight - 10) {
       if (rect.top - cardHeight - 8 > 10) {
         top = rect.top - cardHeight - 8;
@@ -345,7 +528,6 @@
       }
     }
 
-    // Horizontal boundary clamp
     if (left < 10) left = 10;
     if (left + cardWidth > winWidth - 10) {
       left = Math.max(10, winWidth - cardWidth - 10);
@@ -356,10 +538,65 @@
     cardEl.style.top = `${Math.round(top)}px`;
   }
 
+  // Save word to Vocabulary Notebook in chrome.storage.local
+  function toggleWordBook(data) {
+    if (!data || !data.title) return;
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+
+    const wordItem = {
+      word: data.baseWord || data.title,
+      phonetic: data.phonetic || '',
+      translation: activeTransText || data.translation || '',
+      date: Date.now(),
+      url: window.location.href
+    };
+
+    chrome.storage.local.get({ wordBook: [] }, (res) => {
+      let book = res.wordBook || [];
+      const idx = book.findIndex(item => item.word.toLowerCase() === wordItem.word.toLowerCase());
+      const btnStar = shadowRoot ? shadowRoot.querySelector('#btn-star') : null;
+
+      if (idx >= 0) {
+        // Remove
+        book.splice(idx, 1);
+        if (btnStar) {
+          btnStar.classList.remove('active-starred');
+          btnStar.innerHTML = ICONS.star;
+          btnStar.title = '收藏到生词本';
+        }
+      } else {
+        // Add
+        book.unshift(wordItem);
+        if (book.length > 500) book.pop(); // Keep 500 latest words
+        if (btnStar) {
+          btnStar.classList.add('active-starred');
+          btnStar.innerHTML = ICONS.starFilled;
+          btnStar.title = '已收藏 (点击移除)';
+        }
+      }
+
+      chrome.storage.local.set({ wordBook: book });
+    });
+  }
+
+  // Record search history
+  function recordHistory(query) {
+    if (!query || typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+    chrome.storage.local.get({ searchHistory: [] }, (res) => {
+      let history = res.searchHistory || [];
+      history = history.filter(item => item.word.toLowerCase() !== query.toLowerCase());
+      history.unshift({ word: query, date: Date.now() });
+      if (history.length > 100) history.pop();
+      chrome.storage.local.set({ searchHistory: history });
+    });
+  }
+
   // Render card content
   function renderCard(data, rect) {
     setupShadowDOM();
+    hideTriggerIcon();
 
+    currentWordData = data;
     activeQuery = data.title;
     activeTransText = data.rawTrans || '';
 
@@ -415,13 +652,19 @@
       : `<span class="badge-source online">● ${escapeHtml(data.sourceName || '在线翻译')}</span>`;
 
     cardEl.innerHTML = `
-      <div class="card-header">
+      <div class="card-header" title="拖拽可移动位置">
         <div class="card-title-group">
           <span class="word-title">${escapeHtml(data.title)}</span>
           ${phoneticHtml}
         </div>
         <div class="header-actions">
           ${speakerBtnHtml}
+          <button class="action-btn" id="btn-star" title="收藏到生词本">
+            ${ICONS.star}
+          </button>
+          <button class="action-btn ${isPinned ? 'active-pinned' : ''}" id="btn-pin" title="${isPinned ? '已固定 (点击解开)' : '固定卡片 (点击外部不关闭)'}">
+            ${ICONS.pin}
+          </button>
           <button class="action-btn" id="btn-copy" title="复制释义">
             ${ICONS.copy}
           </button>
@@ -439,12 +682,44 @@
       </div>
     `;
 
-    // Bind event listeners inside shadow DOM
+    // Check if word is already in wordBook to show filled star
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local && data.title) {
+      chrome.storage.local.get({ wordBook: [] }, (res) => {
+        const book = res.wordBook || [];
+        const isStarred = book.some(item => item.word.toLowerCase() === (data.baseWord || data.title).toLowerCase());
+        const starBtn = shadowRoot.querySelector('#btn-star');
+        if (starBtn && isStarred) {
+          starBtn.classList.add('active-starred');
+          starBtn.innerHTML = ICONS.starFilled;
+          starBtn.title = '已收藏 (点击移除)';
+        }
+      });
+    }
+
+    // Event bindings
     const btnSpeaker = shadowRoot.querySelector('#btn-speaker');
     if (btnSpeaker) {
       btnSpeaker.onclick = (e) => {
         e.stopPropagation();
         playAudio(data.baseWord || data.title);
+      };
+    }
+
+    const btnStar = shadowRoot.querySelector('#btn-star');
+    if (btnStar) {
+      btnStar.onclick = (e) => {
+        e.stopPropagation();
+        toggleWordBook(data);
+      };
+    }
+
+    const btnPin = shadowRoot.querySelector('#btn-pin');
+    if (btnPin) {
+      btnPin.onclick = (e) => {
+        e.stopPropagation();
+        isPinned = !isPinned;
+        btnPin.classList.toggle('active-pinned', isPinned);
+        btnPin.title = isPinned ? '已固定 (点击解开)' : '固定卡片 (点击外部不关闭)';
       };
     }
 
@@ -467,7 +742,7 @@
     if (btnClose) {
       btnClose.onclick = (e) => {
         e.stopPropagation();
-        hideCard();
+        hideCard(true);
       };
     }
 
@@ -490,59 +765,9 @@
       .replace(/"/g, '&quot;');
   }
 
-  // Handle selection search
-  async function processSelection(selection, overrideText = null) {
-    if (!settings.enabled && !overrideText) return;
-
-    let text = overrideText;
-    let rect = null;
-
-    if (!text) {
-      // Check input / textarea active element first
-      const activeEl = document.activeElement;
-      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
-        const start = activeEl.selectionStart;
-        const end = activeEl.selectionEnd;
-        if (typeof start === 'number' && typeof end === 'number' && end > start) {
-          text = activeEl.value.substring(start, end);
-          rect = activeEl.getBoundingClientRect();
-        }
-      }
-
-      // Check window selection
-      if (!text && selection && selection.rangeCount > 0 && !selection.isCollapsed) {
-        text = selection.toString();
-        try {
-          const range = selection.getRangeAt(0);
-          rect = range.getBoundingClientRect();
-        } catch (e) {}
-      }
-    }
-
-    if (!text) {
-      hideCard();
-      return;
-    }
-
-    // Clean paper text (PDF hyphen removal, multi-whitespace collapse)
-    const cleaned = dictService.cleanPaperText(text, settings.deHyphen);
-
-    if (!dictService.isLookupEligible(cleaned)) {
-      hideCard();
-      return;
-    }
-
-    // Fallback rect if needed
-    if (!rect || (rect.width === 0 && rect.height === 0)) {
-      rect = {
-        left: window.innerWidth / 2 - 100,
-        top: window.innerHeight / 3,
-        right: window.innerWidth / 2 + 100,
-        bottom: window.innerHeight / 3 + 20,
-        width: 200,
-        height: 20
-      };
-    }
+  // Perform actual lookup and render
+  async function executeLookup(cleaned, rect) {
+    recordHistory(cleaned);
 
     const isSingleWord = dictService.isSingleWord(cleaned);
 
@@ -627,9 +852,98 @@
     }
   }
 
+  // Handle selection search
+  function processSelection(selection, overrideText = null, eventTrigger = null) {
+    if (!settings.enabled && !overrideText) return;
+    if (isBlacklisted() && !overrideText) return;
+
+    let text = overrideText;
+    let rect = null;
+
+    if (!text) {
+      const activeEl = document.activeElement;
+      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+        const start = activeEl.selectionStart;
+        const end = activeEl.selectionEnd;
+        if (typeof start === 'number' && typeof end === 'number' && end > start) {
+          text = activeEl.value.substring(start, end);
+          rect = activeEl.getBoundingClientRect();
+        }
+      }
+
+      if (!text && selection && selection.rangeCount > 0 && !selection.isCollapsed) {
+        text = selection.toString();
+        try {
+          const range = selection.getRangeAt(0);
+          rect = range.getBoundingClientRect();
+        } catch (e) {}
+      }
+    }
+
+    if (!text) {
+      hideTriggerIcon();
+      hideCard();
+      return;
+    }
+
+    const cleaned = dictService.cleanPaperText(text, settings.deHyphen);
+
+    if (!dictService.isLookupEligible(cleaned)) {
+      hideTriggerIcon();
+      hideCard();
+      return;
+    }
+
+    if (!rect || (rect.width === 0 && rect.height === 0)) {
+      rect = {
+        left: window.innerWidth / 2 - 100,
+        top: window.innerHeight / 3,
+        right: window.innerWidth / 2 + 100,
+        bottom: window.innerHeight / 3 + 20,
+        width: 200,
+        height: 20
+      };
+    }
+
+    // Direct override (e.g. from context menu)
+    if (overrideText) {
+      executeLookup(cleaned, rect);
+      return;
+    }
+
+    // Check Trigger Mode
+    const mode = settings.triggerMode || 'direct';
+
+    if (mode === 'modifier') {
+      const requiredKey = settings.modifierKey || 'Alt';
+      const isModifierPressed = eventTrigger && (
+        (requiredKey === 'Alt' && eventTrigger.altKey) ||
+        (requiredKey === 'Control' && (eventTrigger.ctrlKey || eventTrigger.metaKey)) ||
+        (requiredKey === 'Shift' && eventTrigger.shiftKey)
+      );
+
+      if (!isModifierPressed) {
+        hideTriggerIcon();
+        hideCard();
+        return;
+      }
+      executeLookup(cleaned, rect);
+      return;
+    }
+
+    if (mode === 'direct') {
+      executeLookup(cleaned, rect);
+      return;
+    }
+
+    // Mode === 'icon' (Default: Unobtrusive lightweight trigger icon)
+    pendingSelectionData = { text: cleaned, rect };
+    showTriggerIcon(rect);
+  }
+
   // Debounced check
   let checkTimer = null;
-  function triggerSelectionCheck() {
+  function triggerSelectionCheck(e) {
     if (checkTimer) clearTimeout(checkTimer);
     checkTimer = setTimeout(() => {
       const selection = window.getSelection();
@@ -637,50 +951,52 @@
       const isInputSelection = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && activeEl.selectionEnd > activeEl.selectionStart;
 
       if ((!selection || selection.isCollapsed) && !isInputSelection) {
+        hideTriggerIcon();
         hideCard();
         return;
       }
-      processSelection(selection);
-    }, 25);
+      processSelection(selection, null, e);
+    }, 80);
   }
 
-  // Mouse up (Capture & Bubble)
+  // Single Mouse Up Listener (No duplicate listener)
   function onMouseUp(e) {
-    if (e.composedPath && e.composedPath().some(el => el === cardEl || el === hostEl)) {
+    if (e.composedPath && e.composedPath().some(el => el === cardEl || el === hostEl || el === triggerIconEl)) {
       return;
     }
-    triggerSelectionCheck();
+    triggerSelectionCheck(e);
   }
 
-  document.addEventListener('mouseup', onMouseUp, true);
   document.addEventListener('mouseup', onMouseUp, false);
 
   // Key up for keyboard selections (Shift + Arrows)
   document.addEventListener('keyup', (e) => {
     if (e.key === 'Shift' || e.key.startsWith('Arrow')) {
-      triggerSelectionCheck();
+      triggerSelectionCheck(e);
     }
-  }, true);
+  }, false);
 
   // Click outside to dismiss
   document.addEventListener('mousedown', (e) => {
-    if (e.composedPath && e.composedPath().some(el => el === cardEl || el === hostEl)) {
+    if (e.composedPath && e.composedPath().some(el => el === cardEl || el === hostEl || el === triggerIconEl)) {
       return;
     }
-    if (cardEl && cardEl.classList.contains('visible')) {
+    hideTriggerIcon();
+    if (!isPinned && cardEl && cardEl.classList.contains('visible')) {
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) {
         hideCard();
       }
     }
-  }, true);
+  }, false);
 
   // ESC key to dismiss
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      hideCard();
+      hideTriggerIcon();
+      hideCard(true); // force close even if pinned
     }
-  }, true);
+  }, false);
 
   // Context menu trigger from background
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {

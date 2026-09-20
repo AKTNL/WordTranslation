@@ -1,15 +1,25 @@
 /**
  * PaperDict - Background Service Worker (Manifest V3)
- * Handles online translation fallback, context menu actions, PDF interception, and reader navigation.
+ * Handles online translation fallback, custom LLM/DeepL engines,
+ * persistent cache with chrome.storage.local, context menu actions, and reader navigation.
  */
 
 // Default settings
 const DEFAULT_SETTINGS = {
   enabled: true,
+  triggerMode: 'direct', // 'direct' (default) | 'icon' | 'modifier'
+  modifierKey: 'Alt',
   deHyphen: true,
   autoAudio: false,
   onlineFallback: true,
-  autoInterceptPdf: true
+  autoInterceptPdf: false, // Default false: no aggressive PDF hijacking!
+  bilingualDefault: false,
+  capsuleEnabled: true,
+  blacklist: [],
+  customEngine: 'default', // 'default' | 'deepl' | 'openai'
+  customApiKey: '',
+  customApiEndpoint: '',
+  customModel: ''
 };
 
 // URL patterns that indicate a PDF document
@@ -63,7 +73,7 @@ chrome.runtime.onInstalled.addListener(async () => {
     const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*', 'file:///*'] });
     for (const tab of tabs) {
       if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) continue;
-      if (isPdfUrl(tab.url)) continue; // Native PDF cannot receive content script
+      if (isPdfUrl(tab.url)) continue;
       chrome.scripting.insertCSS({
         target: { tabId: tab.id, allFrames: true },
         files: ['bilingual.css']
@@ -78,10 +88,10 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
 });
 
-// Auto-intercept online PDF navigations to PaperDict Reader
+// Auto-intercept online PDF navigations to PaperDict Reader if user explicitly opted in
 if (chrome.webNavigation && chrome.webNavigation.onBeforeNavigate) {
   chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
-    if (details.frameId !== 0) return; // Top frame only
+    if (details.frameId !== 0) return;
     const url = details.url;
     if (!url || !/^https?:\/\//i.test(url)) return;
 
@@ -138,12 +148,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const rawText = info.selectionText.trim();
     if (!tab || !tab.id) return;
 
-    // Check if the tab is Chrome's native PDF viewer or an internal page
     const isNativePdf = isPdfUrl(tab.url) || tab.url.startsWith('file://') || tab.url.startsWith('chrome-extension://');
 
     if (isNativePdf) {
-      // In native PDF viewer, content script card is hidden behind <embed>
-      // Pop up a dedicated translation mini-window
       openTranslationMiniWindow(rawText);
       return;
     }
@@ -171,6 +178,45 @@ function openTranslationMiniWindow(text) {
   });
 }
 
+// Persistent translation cache backed by chrome.storage.local for Manifest V3 lifecycle
+const memoryCache = new Map();
+
+async function getCachedTranslation(query) {
+  if (memoryCache.has(query)) {
+    return memoryCache.get(query);
+  }
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    try {
+      const res = await chrome.storage.local.get('translationCache');
+      const diskCache = res.translationCache || {};
+      if (diskCache[query]) {
+        memoryCache.set(query, diskCache[query]);
+        return diskCache[query];
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+async function setCachedTranslation(query, translation) {
+  memoryCache.set(query, translation);
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    try {
+      const res = await chrome.storage.local.get('translationCache');
+      const diskCache = res.translationCache || {};
+      diskCache[query] = translation;
+      const keys = Object.keys(diskCache);
+      if (keys.length > 800) {
+        // Clean oldest entries
+        for (let i = 0; i < 100; i++) {
+          delete diskCache[keys[i]];
+        }
+      }
+      await chrome.storage.local.set({ translationCache: diskCache });
+    } catch (e) {}
+  }
+}
+
 // Message listener for online translation and background actions
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'TRANSLATE_ONLINE') {
@@ -195,11 +241,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// In-memory cache for paragraph and sentence translations
-const translationMemoryCache = new Map();
-
 /**
- * Multi-engine online translation with automatic failover and caching
+ * Multi-engine online translation with user custom API support, caching and failover
  */
 async function handleOnlineTranslation(text) {
   if (!text || !text.trim()) {
@@ -208,30 +251,64 @@ async function handleOnlineTranslation(text) {
 
   const query = text.trim();
 
-  // Check cache first
-  if (translationMemoryCache.has(query)) {
+  // 1. Check persistent cache
+  const cached = await getCachedTranslation(query);
+  if (cached) {
     return {
       success: true,
-      translation: translationMemoryCache.get(query),
+      translation: cached,
       source: 'PaperDict 本地缓存',
       query
     };
   }
 
-  // If text contains formula tokens or is a long paragraph, prioritize Google Translate GTX
+  // 2. Check if user configured custom API (OpenAI / DeepL)
+  const userSettings = await new Promise((resolve) => {
+    chrome.storage.sync.get(['customEngine', 'customApiKey', 'customApiEndpoint', 'customModel'], (items) => {
+      resolve(items || {});
+    });
+  });
+
+  if (userSettings.customEngine === 'openai' && userSettings.customApiKey) {
+    try {
+      const customRes = await tryOpenAITranslate(
+        query,
+        userSettings.customApiKey,
+        userSettings.customApiEndpoint,
+        userSettings.customModel
+      );
+      if (customRes) {
+        await setCachedTranslation(query, customRes.translation);
+        return customRes;
+      }
+    } catch (err) {
+      console.warn('Custom OpenAI translation failed, falling back to public engine:', err);
+    }
+  } else if (userSettings.customEngine === 'deepl' && userSettings.customApiKey) {
+    try {
+      const deeplRes = await tryDeepLTranslate(query, userSettings.customApiKey, userSettings.customApiEndpoint);
+      if (deeplRes) {
+        await setCachedTranslation(query, deeplRes.translation);
+        return deeplRes;
+      }
+    } catch (err) {
+      console.warn('Custom DeepL translation failed, falling back to public engine:', err);
+    }
+  }
+
+  // 3. Fallback to free public engines
   const hasFormulaToken = query.includes('PDMATH_');
   const isLongParagraph = query.length > 200 || hasFormulaToken;
 
   if (isLongParagraph) {
-    // Try Google Translate GTX first
     const gtxResult = await tryGoogleTranslate(query);
     if (gtxResult) {
-      translationMemoryCache.set(query, gtxResult.translation);
+      await setCachedTranslation(query, gtxResult.translation);
       return gtxResult;
     }
   }
 
-  // Try Engine 1: MyMemory Translation API (Fast, reliable, works without VPN)
+  // Try Engine 1: MyMemory Translation API
   try {
     const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(query)}&langpair=en|zh-CN`;
     const controller = new AbortController();
@@ -245,7 +322,7 @@ async function handleOnlineTranslation(text) {
       if (data && data.responseData && data.responseData.translatedText) {
         const result = data.responseData.translatedText;
         if (result && !result.startsWith('MYMEMORY WARNING')) {
-          translationMemoryCache.set(query, result);
+          await setCachedTranslation(query, result);
           return {
             success: true,
             translation: result,
@@ -259,11 +336,11 @@ async function handleOnlineTranslation(text) {
     console.warn('MyMemory engine failed, trying fallback:', e);
   }
 
-  // Try Engine 2: Google Translate GTX endpoint (Free web API)
+  // Try Engine 2: Google Translate GTX endpoint
   if (!isLongParagraph) {
     const gtxResult = await tryGoogleTranslate(query);
     if (gtxResult) {
-      translationMemoryCache.set(query, gtxResult.translation);
+      await setCachedTranslation(query, gtxResult.translation);
       return gtxResult;
     }
   }
@@ -280,7 +357,7 @@ async function handleOnlineTranslation(text) {
     if (res.ok) {
       const data = await res.json();
       if (data && data.translation) {
-        translationMemoryCache.set(query, data.translation);
+        await setCachedTranslation(query, data.translation);
         return {
           success: true,
           translation: data.translation,
@@ -325,6 +402,78 @@ async function tryGoogleTranslate(query) {
     }
   } catch (e) {
     console.warn('Google Translate engine failed:', e);
+  }
+  return null;
+}
+
+// Custom OpenAI-compatible Translation (DeepSeek, Kimi, GLM, OpenAI, etc.)
+async function tryOpenAITranslate(query, apiKey, customEndpoint, customModel) {
+  const endpoint = customEndpoint || 'https://api.openai.com/v1/chat/completions';
+  const model = customModel || 'gpt-4o-mini';
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an expert academic translator. Translate the following English scientific text into fluent, professional Simplified Chinese. Preserve any PDMATH_ tokens exactly without alteration. Output ONLY the translated text without commentary.'
+        },
+        { role: 'user', content: query }
+      ],
+      temperature: 0.2
+    })
+  });
+
+  if (res.ok) {
+    const data = await res.json();
+    const translated = data?.choices?.[0]?.message?.content?.trim();
+    if (translated) {
+      return {
+        success: true,
+        translation: translated,
+        source: `AI 模型 (${model})`,
+        query
+      };
+    }
+  }
+  return null;
+}
+
+// Custom DeepL Translation
+async function tryDeepLTranslate(query, apiKey, customEndpoint) {
+  const isFree = apiKey.endsWith(':fx');
+  const defaultEndpoint = isFree ? 'https://api-free.deepl.com/v2/translate' : 'https://api.deepl.com/v2/translate';
+  const endpoint = customEndpoint || defaultEndpoint;
+
+  const body = new URLSearchParams({
+    auth_key: apiKey,
+    text: query,
+    target_lang: 'ZH'
+  });
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString()
+  });
+
+  if (res.ok) {
+    const data = await res.json();
+    const translated = data?.translations?.[0]?.text;
+    if (translated) {
+      return {
+        success: true,
+        translation: translated,
+        source: 'DeepL 学术翻译',
+        query
+      };
+    }
   }
   return null;
 }

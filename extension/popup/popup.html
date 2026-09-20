@@ -19,144 +19,256 @@
       <span class="badge-status" id="badge-status">词库就绪</span>
     </header>
 
-    <!-- PDF Detection Banner -->
-    <div id="pdf-detect-banner" class="pdf-detect-banner" style="display: none;">
-      <div class="banner-content">
-        <div class="banner-title">📄 当前标签页为 PDF 论文</div>
-        <div class="banner-desc">Chrome 自带内核拦截了直接划词，点击一键转入阅读器畅享秒查：</div>
-      </div>
-      <button id="btn-convert-current-pdf" class="btn-convert-pdf">
-        在 PaperDict 阅读器中打开 (开启划词即弹)
-      </button>
-    </div>
+    <!-- Top Navigation Tabs -->
+    <nav class="popup-nav-tabs">
+      <button class="nav-tab active" data-tab="tab-search-settings">查词与设置</button>
+      <button class="nav-tab" data-tab="tab-wordbook">生词本 <span class="tab-badge" id="nav-wordbook-count">0</span></button>
+      <button class="nav-tab" data-tab="tab-history">查词历史</button>
+      <button class="nav-tab" data-tab="tab-api">自定义 API</button>
+    </nav>
 
-    <!-- Quick Search Box -->
-    <section class="search-section">
-      <div class="search-input-wrapper">
-        <input type="text" id="search-input" placeholder="输入英文单词或论文句子..." autofocus autocomplete="off">
-        <button id="btn-search-clear" class="btn-clear" title="清空" style="display: none;">✕</button>
-        <button id="btn-search-go" class="btn-go" title="查询">→</button>
+    <!-- Tab 1: Search & Settings -->
+    <main id="tab-search-settings" class="tab-pane active">
+      <!-- PDF Detection Banner -->
+      <div id="pdf-detect-banner" class="pdf-detect-banner" style="display: none;">
+        <div class="banner-content">
+          <div class="banner-title">📄 当前标签页为 PDF 论文</div>
+          <div class="banner-desc">Chrome 自带内核拦截了直接划词，点击一键转入阅读器畅享秒查：</div>
+        </div>
+        <button id="btn-convert-current-pdf" class="btn-convert-pdf">
+          在 PaperDict 阅读器中打开 (开启划词即弹)
+        </button>
       </div>
 
-      <!-- Quick Result Card -->
-      <div id="quick-result" class="quick-result-card" style="display: none;">
-        <div class="res-head">
-          <div class="res-title-group">
-            <span class="res-word" id="res-word"></span>
-            <span class="res-phonetic" id="res-phonetic"></span>
+      <!-- Quick Search Box -->
+      <section class="search-section">
+        <div class="search-input-wrapper">
+          <input type="text" id="search-input" placeholder="输入英文单词或论文句子..." autofocus autocomplete="off">
+          <button id="btn-search-clear" class="btn-clear" title="清空" style="display: none;">✕</button>
+          <button id="btn-search-go" class="btn-go" title="查询">→</button>
+        </div>
+
+        <!-- Quick Result Card -->
+        <div id="quick-result" class="quick-result-card" style="display: none;">
+          <div class="res-head">
+            <div class="res-title-group">
+              <span class="res-word" id="res-word"></span>
+              <span class="res-phonetic" id="res-phonetic"></span>
+            </div>
+            <div class="res-actions">
+              <button id="res-speaker" class="action-btn" title="朗读发音">
+                <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+              </button>
+              <button id="res-star" class="action-btn" title="收藏到生词本">
+                <svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+              </button>
+              <button id="res-copy" class="action-btn" title="复制释义">
+                <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+              </button>
+            </div>
           </div>
-          <div class="res-actions">
-            <button id="res-speaker" class="action-btn" title="朗读发音">
-              <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-            </button>
-            <button id="res-copy" class="action-btn" title="复制释义">
-              <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-            </button>
+          <div class="res-body" id="res-body"></div>
+          <div class="res-footer">
+            <span class="res-source" id="res-source">● 离线学术词典</span>
+            <span class="res-copy-hint" id="res-copy-hint">已复制 √</span>
           </div>
         </div>
-        <div class="res-body" id="res-body"></div>
-        <div class="res-footer">
-          <span class="res-source" id="res-source">● 离线学术词典</span>
-          <span class="res-copy-hint" id="res-copy-hint">已复制 √</span>
+      </section>
+
+      <!-- Academic Full Paper Bilingual & Chinese Reader (Phase 2) -->
+      <section class="bilingual-reader-section">
+        <div class="section-header-row">
+          <h2 class="section-title">论文就地全文速读</h2>
+          <span class="shortcut-tip-badge">快捷键 Alt+B</span>
         </div>
-      </div>
-    </section>
-
-    <!-- Academic Full Paper Bilingual & Chinese Reader (Phase 2) -->
-    <section class="bilingual-reader-section">
-      <div class="section-header-row">
-        <h2 class="section-title">论文就地全文速读</h2>
-        <span class="shortcut-tip-badge">快捷键 Alt+B</span>
-      </div>
-      <div class="bilingual-mode-selector">
-        <button id="btn-popup-orig" class="btn-mode-tab active" data-mode="original" title="原版英文排版">原版英文</button>
-        <button id="btn-popup-bi" class="btn-mode-tab" data-mode="bilingual" title="双语对照模式 (Alt+B)">双语对照</button>
-        <button id="btn-popup-zh" class="btn-mode-tab" data-mode="chinese" title="纯中文速读">纯享中文</button>
-      </div>
-      <div class="bilingual-tab-status" id="bilingual-tab-status">
-        <span class="status-dot"></span>
-        <span id="bilingual-status-text">点击模式切换当前标签页论文排版</span>
-      </div>
-    </section>
-
-    <!-- Settings Switch Toggles -->
-    <section class="settings-section">
-      <h2 class="section-title">功能开关</h2>
-
-      <div class="setting-item">
-        <div class="setting-info">
-          <span class="setting-label">划选即弹释义</span>
-          <span class="setting-desc">鼠标选中文本松开瞬间浮现释义卡片</span>
+        <div class="bilingual-mode-selector">
+          <button id="btn-popup-orig" class="btn-mode-tab active" data-mode="original" title="原版英文排版">原版英文</button>
+          <button id="btn-popup-bi" class="btn-mode-tab" data-mode="bilingual" title="双语对照模式 (Alt+B)">双语对照</button>
+          <button id="btn-popup-zh" class="btn-mode-tab" data-mode="chinese" title="纯中文速读">纯享中文</button>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="toggle-enabled">
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="setting-item">
-        <div class="setting-info">
-          <span class="setting-label">默认开启双语对照</span>
-          <span class="setting-desc">访问学术网页自动就地呈现双语译文</span>
+        <div class="bilingual-tab-status" id="bilingual-tab-status">
+          <span class="status-dot"></span>
+          <span id="bilingual-status-text">点击模式切换当前标签页论文排版</span>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="toggle-default-bilingual">
-          <span class="slider"></span>
-        </label>
-      </div>
+      </section>
 
-      <div class="setting-item">
-        <div class="setting-info">
-          <span class="setting-label">自动在阅读器中打开 PDF</span>
-          <span class="setting-desc">访问论文 PDF 自动转入 PaperDict 开启划词</span>
+      <!-- Settings Switch Toggles -->
+      <section class="settings-section">
+        <h2 class="section-title">交互与偏好设置</h2>
+
+        <!-- Trigger Mode Selection -->
+        <div class="setting-item-column">
+          <div class="setting-info">
+            <span class="setting-label">划词查词触发模式</span>
+            <span class="setting-desc">默认直接秒弹，可切换为“轻量图标”防遮挡或“快捷键”</span>
+          </div>
+          <select id="select-trigger-mode" class="custom-select">
+            <option value="direct">划选直接秒弹 (默认)</option>
+            <option value="icon">轻量悬浮图标 (防遮挡)</option>
+            <option value="modifier">按住快捷键划选 (Alt)</option>
+          </select>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="toggle-interceptpdf">
-          <span class="slider"></span>
-        </label>
-      </div>
 
-      <div class="setting-item">
-        <div class="setting-info">
-          <span class="setting-label">智能拼接 PDF 连字符</span>
-          <span class="setting-desc">自动将跨行断词（如 hypo- thesis）合并</span>
+        <!-- Current Site Enable/Disable -->
+        <div class="setting-item" id="site-blacklist-item">
+          <div class="setting-info">
+            <span class="setting-label">在当前网站启用 PaperDict</span>
+            <span class="setting-desc" id="current-site-label">当前网站: 加载中...</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-site-enable" checked>
+            <span class="slider"></span>
+          </label>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="toggle-dehyphen">
-          <span class="slider"></span>
-        </label>
-      </div>
 
-      <div class="setting-item">
-        <div class="setting-info">
-          <span class="setting-label">查词自动真人发音</span>
-          <span class="setting-desc">划选查词时自动播放标准美音发音</span>
+        <!-- Capsule Toggle -->
+        <div class="setting-item">
+          <div class="setting-info">
+            <span class="setting-label">显示右侧速读悬浮胶囊</span>
+            <span class="setting-desc">关闭后不显示常驻胶囊，仍可用 Alt+B 开启速读</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-capsule" checked>
+            <span class="slider"></span>
+          </label>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="toggle-autoaudio">
-          <span class="slider"></span>
-        </label>
-      </div>
 
-      <div class="setting-item">
-        <div class="setting-info">
-          <span class="setting-label">在线翻译长句兜底</span>
-          <span class="setting-desc">长句或本地未收录生词自动在线翻译</span>
+        <!-- Auto Intercept PDF Toggle -->
+        <div class="setting-item">
+          <div class="setting-info">
+            <span class="setting-label">自动在阅读器中打开 PDF</span>
+            <span class="setting-desc">访问 PDF 链接自动跳转阅读器 (默认关闭避免打扰)</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-interceptpdf">
+            <span class="slider"></span>
+          </label>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="toggle-online">
-          <span class="slider"></span>
-        </label>
-      </div>
-    </section>
 
-    <!-- Academic PDF Reader Entry -->
-    <section class="reader-entry-section">
-      <button id="btn-open-reader" class="btn-primary-block">
-        <svg viewBox="0 0 24 24" class="btn-icon"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
-        打开学术 PDF 阅读器 (极速划译)
-      </button>
-    </section>
+        <!-- Default Bilingual Toggle -->
+        <div class="setting-item">
+          <div class="setting-info">
+            <span class="setting-label">默认开启双语对照</span>
+            <span class="setting-desc">打开任何学术网页自动就地呈现双语译文</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-default-bilingual">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Dehyphen Toggle -->
+        <div class="setting-item">
+          <div class="setting-info">
+            <span class="setting-label">智能拼接 PDF 连字符</span>
+            <span class="setting-desc">自动将跨行断词（如 hypo- thesis）合并</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-dehyphen">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Auto Audio Toggle -->
+        <div class="setting-item">
+          <div class="setting-info">
+            <span class="setting-label">查词自动真人发音</span>
+            <span class="setting-desc">划选查词时自动播放标准发音</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-autoaudio">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Online Fallback Toggle -->
+        <div class="setting-item">
+          <div class="setting-info">
+            <span class="setting-label">在线翻译长句兜底</span>
+            <span class="setting-desc">长句或未收录生词自动在线翻译</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-online">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Academic PDF Reader Entry -->
+      <section class="reader-entry-section">
+        <button id="btn-open-reader" class="btn-primary-block">
+          <svg viewBox="0 0 24 24" class="btn-icon"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+          打开学术 PDF 阅读器 (极速划译)
+        </button>
+      </section>
+    </main>
+
+    <!-- Tab 2: WordBook (生词本) -->
+    <main id="tab-wordbook" class="tab-pane" style="display: none;">
+      <section class="wordbook-section">
+        <div class="wordbook-toolbar">
+          <span class="wordbook-count-text">已收藏 <strong id="wordbook-total">0</strong> 词</span>
+          <div class="wordbook-actions">
+            <button id="btn-export-anki" class="btn-tool-sm" title="导出为 Anki 兼容卡片文本">导出 Anki</button>
+            <button id="btn-export-csv" class="btn-tool-sm" title="导出为 CSV 表格">导出 CSV</button>
+            <button id="btn-clear-wordbook" class="btn-tool-sm danger" title="清空生词本">清空</button>
+          </div>
+        </div>
+
+        <div id="wordbook-list" class="wordbook-list-container">
+          <div class="empty-hint">生词本空空如也，查词时点击卡片右上角 ⭐ 即可收藏！</div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Tab 3: History (查词历史) -->
+    <main id="tab-history" class="tab-pane" style="display: none;">
+      <section class="history-section">
+        <div class="history-toolbar">
+          <span class="history-count-text">最近查词记录</span>
+          <button id="btn-clear-history" class="btn-tool-sm danger">清空记录</button>
+        </div>
+        <div id="history-list" class="history-list-container">
+          <div class="empty-hint">暂无查词历史记录</div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Tab 4: Custom API (自定义翻译引擎) -->
+    <main id="tab-api" class="tab-pane" style="display: none;">
+      <section class="api-section">
+        <h2 class="section-title">学术翻译引擎配置</h2>
+
+        <div class="api-field-group">
+          <label class="field-label">翻译引擎来源</label>
+          <select id="select-custom-engine" class="custom-select">
+            <option value="default">公共免费引擎 (MyMemory + Google GTX)</option>
+            <option value="openai">OpenAI 兼容大模型 (DeepSeek / Kimi / 智谱 GLM / OpenAI)</option>
+            <option value="deepl">DeepL 翻译 API</option>
+          </select>
+        </div>
+
+        <div id="custom-api-fields" style="display: none;">
+          <div class="api-field-group">
+            <label class="field-label">API 终端地址 (Endpoint)</label>
+            <input type="text" id="input-api-endpoint" class="custom-input" placeholder="https://api.openai.com/v1/chat/completions">
+          </div>
+
+          <div class="api-field-group">
+            <label class="field-label">API Key 密钥</label>
+            <input type="password" id="input-api-key" class="custom-input" placeholder="sk-...">
+          </div>
+
+          <div class="api-field-group" id="field-model-name">
+            <label class="field-label">模型名称 (Model)</label>
+            <input type="text" id="input-api-model" class="custom-input" placeholder="gpt-4o-mini 或 deepseek-chat">
+          </div>
+        </div>
+
+        <button id="btn-save-api" class="btn-primary-block" style="margin-top: 14px;">保存 API 配置</button>
+        <div id="api-save-tip" class="api-tip-text" style="display: none;">配置已成功保存！</div>
+      </section>
+    </main>
 
     <!-- Tips / Help Notice -->
     <footer class="popup-footer">

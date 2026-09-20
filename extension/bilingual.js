@@ -351,13 +351,30 @@
    * Collapsible, vertically draggable widget docked at page right edge.
    */
   class CapsuleUI {
-    constructor(onModeChange) {
-      this.onModeChange = onModeChange;
+    constructor(options = {}) {
+      if (typeof options === 'function') {
+        this.onModeChange = options;
+        this.onHideCapsule = null;
+        this.onDisableSite = null;
+      } else {
+        this.onModeChange = options.onModeChange;
+        this.onHideCapsule = options.onHideCapsule;
+        this.onDisableSite = options.onDisableSite;
+      }
       this.currentMode = 'original';
       this.isExpanded = false;
       this.host = null;
       this.shadow = null;
       this.stats = { total: 0, translated: 0 };
+    }
+
+    hideCapsule() {
+      if (this.onHideCapsule) this.onHideCapsule();
+      if (this.host) this.host.remove();
+    }
+
+    disableCapsule() {
+      this.hideCapsule();
     }
 
     init() {
@@ -544,6 +561,25 @@
             align-items: center;
             justify-content: space-between;
           }
+          .footer-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+          }
+          .btn-footer-action {
+            background: transparent;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            color: #64748b;
+            font-size: 11px;
+            padding: 2px 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+          }
+          .btn-footer-action:hover {
+            background: #e2e8f0;
+            color: #0f172a;
+          }
           .shortcut-badge {
             background: #e2e8f0;
             color: #475569;
@@ -598,7 +634,10 @@
           </div>
 
           <div class="panel-footer">
-            <span>切换模式</span>
+            <div class="footer-actions">
+              <button class="btn-footer-action" id="btn-hide-capsule" title="彻底隐藏右侧悬浮胶囊">隐藏胶囊</button>
+              <button class="btn-footer-action" id="btn-disable-site" title="在当前网站禁用插件">在此站禁用</button>
+            </div>
             <span class="shortcut-badge">Alt + B</span>
           </div>
         </div>
@@ -608,6 +647,8 @@
       const pill = this.shadow.getElementById('capsule-pill');
       const panel = this.shadow.getElementById('capsule-panel');
       const btnMin = this.shadow.getElementById('btn-minimize');
+      const btnHide = this.shadow.getElementById('btn-hide-capsule');
+      const btnDisableSite = this.shadow.getElementById('btn-disable-site');
 
       pill.addEventListener('click', () => {
         this.isExpanded = true;
@@ -620,6 +661,20 @@
         panel.classList.remove('visible');
         pill.classList.remove('hidden');
       });
+
+      if (btnHide) {
+        btnHide.addEventListener('click', () => {
+          if (this.onHideCapsule) this.onHideCapsule();
+          if (this.host) this.host.remove();
+        });
+      }
+
+      if (btnDisableSite) {
+        btnDisableSite.addEventListener('click', () => {
+          if (this.onDisableSite) this.onDisableSite();
+          if (this.host) this.host.remove();
+        });
+      }
 
       const modeBtns = this.shadow.querySelectorAll('.mode-btn');
       modeBtns.forEach((btn) => {
@@ -744,18 +799,14 @@
     init() {
       if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
-      // Initialize Capsule UI
-      this.capsule = new CapsuleUI((newMode) => this.setMode(newMode));
-      this.capsule.init();
+      // Setup Storage Sync & Initialize Capsule
+      this.loadSettings();
 
       // Initialize Viewport IntersectionObserver
       this.setupObserver();
 
       // Setup Keyboard Shortcut Alt+B
       this.setupShortcut();
-
-      // Setup Storage Sync
-      this.loadSettings();
 
       // Listen for runtime messages (from Popup or Context Menu)
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
@@ -782,10 +833,51 @@
       }
     }
 
+    initCapsule() {
+      if (this.capsule) return;
+      this.capsule = new CapsuleUI({
+        onModeChange: (newMode) => this.setMode(newMode),
+        onHideCapsule: () => {
+          if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
+            chrome.storage.sync.set({ capsuleEnabled: false });
+          }
+          this.showToast('已隐藏悬浮胶囊，按 Alt+B 仍可随时切换速读');
+        },
+        onDisableSite: () => {
+          const host = window.location.hostname;
+          if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
+            chrome.storage.sync.get({ blacklist: [] }, (res) => {
+              const list = res.blacklist || [];
+              if (!list.includes(host)) list.push(host);
+              chrome.storage.sync.set({ blacklist: list });
+            });
+          }
+          this.restoreOriginalView();
+          this.showToast(`已在当前网站 (${host}) 禁用 PaperDict`);
+        }
+      });
+      this.capsule.init();
+    }
+
     loadSettings() {
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-        chrome.storage.sync.get({ bilingualMode: 'original', bilingualDefault: false }, (items) => {
+        chrome.storage.sync.get({
+          bilingualMode: 'original',
+          bilingualDefault: false,
+          capsuleEnabled: true,
+          blacklist: []
+        }, (items) => {
           if (items) {
+            const currentHost = (typeof window !== 'undefined' && window.location) ? window.location.hostname : '';
+            if (items.blacklist && Array.isArray(items.blacklist) && items.blacklist.some(d => currentHost === d || currentHost.endsWith('.' + d))) {
+              this.isBlacklisted = true;
+              return;
+            }
+
+            if (items.capsuleEnabled !== false) {
+              this.initCapsule();
+            }
+
             if (items.bilingualDefault && items.bilingualMode === 'original') {
               this.setMode('bilingual');
             } else if (items.bilingualMode && items.bilingualMode !== 'original') {
@@ -793,6 +885,8 @@
             }
           }
         });
+      } else {
+        this.initCapsule();
       }
     }
 
@@ -1044,7 +1138,21 @@
       } else {
         // Translation failed
         if (info.transEl) {
-          info.transEl.innerHTML = `<span style="color:#ef4444;font-size:12px;">(翻译暂不可用: ${response?.error || '网络超时'})</span>`;
+          const errMsg = response?.error || '网络超时';
+          info.transEl.innerHTML = `
+            <div class="pd-bilingual-fail" style="display:flex;align-items:center;gap:8px;">
+              <span style="color:#ef4444;font-size:12px;">(翻译暂不可用: ${this.formulaProtector.escapeHtml(errMsg)})</span>
+              <button class="btn-retry-trans" style="padding:1px 6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;color:#2563eb;cursor:pointer;">🔄 重试</button>
+            </div>
+          `;
+          const btnRetry = info.transEl.querySelector('.btn-retry-trans');
+          if (btnRetry) {
+            btnRetry.onclick = (e) => {
+              e.stopPropagation();
+              info.state = 'idle';
+              this.enqueueElement(el);
+            };
+          }
         }
         info.state = 'idle'; // allow retry later
       }
@@ -1148,7 +1256,12 @@
 
     // Auto-instantiate when running in browser web page
     if (typeof window !== 'undefined' && typeof document !== 'undefined' && typeof window.CustomEvent === 'function') {
-      // Do not auto-instantiate the floating capsule manager inside the dedicated PDF reader page
+      // 1. Top frame only: ensure window.self === window.top to prevent duplicate injection inside iframes
+      if (!(window.self === window.top)) {
+        return;
+      }
+
+      // 2. Do not auto-instantiate the floating capsule manager inside the dedicated PDF reader page
       const isReaderPage = window.location && (
         window.location.pathname.includes('/reader/reader.html') ||
         window.location.href.includes('reader/reader.html')
