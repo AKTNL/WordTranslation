@@ -222,8 +222,9 @@ class AcademicAttention(nn.Module):
 
   <h2>4. Empirical Evaluation</h2>
   <p>
-    We conducted extensive empirical evaluations on standard benchmark corpora.
-    The ablation studies verify the individual contributions of each architectural module.
+    We conducted extensive empirical evaluations on standard benchmark corpora with a training budget of $5,000 across 4 TPU nodes.
+    Each training phase cost $10 on dataset A and $20 on dataset B, validating our cost-effective architecture.
+    The ablation studies verify the individual contributions of each architectural module, showing that accuracy reaches $95\%$ while error stays in the range $0 \le \epsilon \le 0.05$.
     Overall, the empirical evidence validates our theoretical formulation and underscores the viability of the proposed paradigm.
   </p>
 

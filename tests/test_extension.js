@@ -121,10 +121,11 @@ assert(!isPdfUrl('chrome-extension://abc/reader/reader.html?file=xyz'), 'Reader 
 
 // 5. Test Phase 2 FormulaProtector & AcademicFilter
 console.log('\n[Test 5: FormulaProtector & AcademicFilter (Phase 2)]');
-const { FormulaProtector, AcademicFilter } = require('../extension/bilingual.js');
+const { FormulaProtector, AcademicFilter, PaperBilingualManager } = require('../extension/bilingual.js');
 
 assert(typeof FormulaProtector === 'function', 'FormulaProtector is exported');
 assert(typeof AcademicFilter === 'function', 'AcademicFilter is exported');
+assert(typeof PaperBilingualManager === 'function', 'PaperBilingualManager is exported');
 
 if (typeof FormulaProtector === 'function') {
   const fp = new FormulaProtector();
@@ -140,6 +141,29 @@ if (typeof FormulaProtector === 'function') {
   const restored = fp.restore(simulatedTranslated, pLatex.tokenMap);
   assert(restored.includes('$E = mc^2$'), 'Inline formula accurately restored');
   assert(restored.includes('$$\\mathcal{L} = \\sum_{i=1}^n x_i$$'), 'Display formula accurately restored');
+
+  // Test Edge Case: Currency vs Math Formulas
+  const currencySentence = 'We spent $10 on dataset A and $20 on dataset B.';
+  const pCurrency = fp.protect(currencySentence);
+  assert(pCurrency.tokenMap.size === 0, 'Standalone currency amounts are not treated as formulas');
+
+  const mixedSentence = 'Total cost was $5,000 for training, where each epoch optimizes $\\mathcal{L}_{total}$.';
+  const pMixed = fp.protect(mixedSentence);
+  assert(pMixed.tokenMap.size === 1, 'Mixed sentence correctly tokenizes only the formula');
+  assert(pMixed.protectedText.includes('$5,000'), 'Currency amount $5,000 is preserved in text');
+
+  const rangeSentence = 'Values in range $0 \\le x \\le 1$ are normalized.';
+  const pRange = fp.protect(rangeSentence);
+  assert(pRange.tokenMap.size === 1, 'Formula starting with digit $0 \\le x \\le 1$ is recognized as formula');
+
+  // Test Resilient Restoration from Translation Engine variations
+  const mapWithTokens = new Map([
+    ['PDMATH_0', { type: 'latex_inline', text: '$x$' }],
+    ['PDMATH_1', { type: 'latex_inline', text: '$y$' }]
+  ]);
+  const engineVariation = '结果为 PD MATH 0 与 pdmath-1';
+  const restoredVariation = fp.restore(engineVariation, mapWithTokens);
+  assert(restoredVariation.includes('$x$') && restoredVariation.includes('$y$'), 'Resiliently restores varied tokens (PD MATH 0, pdmath-1)');
 }
 
 if (typeof AcademicFilter === 'function') {
@@ -147,12 +171,52 @@ if (typeof AcademicFilter === 'function') {
   
   // Test reference heading recognition
   assert(filter.isReferenceHeading('References'), 'References heading matched');
+  assert(filter.isReferenceHeading('REFERENCES'), 'Uppercase REFERENCES heading matched');
   assert(filter.isReferenceHeading('5. Bibliography and Citations'), 'Bibliography heading matched');
+  assert(filter.isReferenceHeading('VI. References'), 'Roman numeral VI. References matched');
+  assert(filter.isReferenceHeading('[5] References'), 'Bracketed [5] References matched');
+  assert(filter.isReferenceHeading('References and Notes'), 'References and Notes matched');
+  assert(filter.isReferenceHeading('Literature Cited'), 'Literature Cited matched');
+  
+  // Test non-reference headings
   assert(!filter.isReferenceHeading('2. Method and Theoretical Formulation'), 'Method heading not matched as reference');
+  assert(!filter.isReferenceHeading('References in Neural Networks: A Survey'), 'Paper title with References not matched');
+  assert(!filter.isReferenceHeading('References to Prior Work'), 'References to Prior Work heading not matched');
 }
 
-// 6. Test Code Syntax / Integrity of all JS files
-console.log('\n[Test 6: JS Files Syntax Validation]');
+// 6. Test Lifecycle & Cleanup in PaperBilingualManager
+console.log('\n[Test 6: PaperBilingualManager Lifecycle & Observer Cleanup]');
+if (typeof PaperBilingualManager === 'function') {
+  const manager = new PaperBilingualManager();
+  
+  let disconnected = false;
+  manager.observer = {
+    disconnect: () => { disconnected = true; },
+    observe: () => {}
+  };
+
+  // Simulate queued elements
+  const mockEl = { id: 'mock-p' };
+  manager.elements = [mockEl];
+  manager.elementStateMap.set(mockEl, {
+    state: 'queued',
+    transEl: {
+      classList: { contains: (cls) => cls === 'pd-bilingual-loading' },
+      remove: () => {}
+    }
+  });
+  manager.queue = [mockEl];
+
+  // Call restoreOriginalView
+  manager.restoreOriginalView();
+
+  assert(disconnected, 'IntersectionObserver disconnected on restore');
+  assert(manager.queue.length === 0, 'Queue cleared on restore');
+  assert(manager.elementStateMap.get(mockEl).state === 'idle', 'Unfinished queued element reset to idle');
+}
+
+// 7. Test Code Syntax / Integrity of all JS files
+console.log('\n[Test 7: JS Files Syntax Validation]');
 const jsFiles = [
   'extension/background.js',
   'extension/bilingual.js',

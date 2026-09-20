@@ -62,6 +62,41 @@
     }
 
     /**
+     * Checks if text inside $...$ is likely a valid LaTeX formula rather than currency or regular text.
+     */
+    isLikelyLatexFormula(content) {
+      const s = String(content || '').trim();
+      if (!s) return false;
+
+      // Pure numbers or currency expressions (e.g. "10", "9.99", "$1,000", "1.5 million")
+      if (/^\$?\d+(?:,\d{3})*(?:\.\d+)?(?:\s*(?:k|m|b|million|billion|trillion|USD|EUR|GBP|dollars?))?$/i.test(s)) {
+        return false;
+      }
+      if (/^\$?\d+(?:,\d{3})*(?:\.\d+)?\s*(?:-|–|—|to)\s*\$?\d+(?:,\d{3})*(?:\.\d+)?$/i.test(s)) {
+        return false;
+      }
+
+      // Strong LaTeX markers
+      const hasLatexCommand = /\\(?:[a-zA-Z]+|[,\.;!%])/.test(s);
+      const hasMathSymbols = /[=+\-*/<>^_~∈∉⊂⊆∪∩∑∏∫√∂∇≤≥≠≈≡±×÷∀∃]/.test(s);
+      const isSingleMathVar = /^[a-zA-Z]$/.test(s);
+      const hasSubSuper = /[a-zA-Z0-9][\^_][a-zA-Z0-9{]/.test(s);
+      const hasMathPunct = /^[a-zA-Z0-9,\s\(\)\[\]]+$/.test(s) && (s.includes('(') || s.includes('[') || /^[a-zA-Z]\s*,\s*[a-zA-Z]/.test(s));
+
+      if (hasLatexCommand || hasMathSymbols || isSingleMathVar || hasSubSuper || hasMathPunct) {
+        return true;
+      }
+
+      // If it contains multiple common English words without LaTeX syntax, reject as formula
+      const words = s.split(/\s+/);
+      if (words.length >= 2 && !hasLatexCommand && !hasMathSymbols) {
+        return false;
+      }
+
+      return true;
+    }
+
+    /**
      * Protects LaTeX math notation in raw text
      */
     protectRawText(text, tokenMap, startIndex = 0) {
@@ -87,11 +122,9 @@
         return ` ${token} `;
       });
 
-      // 3. LaTeX Inline Math: $...$ (ensure not regular currency like $100 or $3.50)
-      text = text.replace(/(?<!\\)\$([^\$\n\r\t]+?)(?<!\\)\$/g, (match, formula) => {
-        const trimmed = formula.trim();
-        // Ignore currency amounts (e.g. $10, $9.99, $1,000)
-        if (/^\d+(?:,\d{3})*(?:\.\d+)?$/.test(trimmed)) {
+      // 3. LaTeX Inline Math: $...$ (respect standard LaTeX delimiters and filter out non-math currency text)
+      text = text.replace(/(?<![\w\\])\$(?!\s)([^\$\n\r]+?)(?<![\s\\])\$(?![0-9\w])/g, (match, formula) => {
+        if (!this.isLikelyLatexFormula(formula)) {
           return match;
         }
         const token = `${this.tokenPrefix}${index++}`;
@@ -115,8 +148,8 @@
 
       let restored = translatedText;
 
-      // Resilient regex matching PDMATH_0, PDMATH 0, pdmath_0, etc.
-      const pattern = /PDMATH\s*[_ \-:]*\s*(\d+)/gi;
+      // Resilient regex matching PDMATH_0, PDMATH 0, pdmath_0, PD MATH 0, PD-MATH-0, etc.
+      const pattern = /PD\s*[-_]?\s*MATH\s*[_ \-:]*\s*(\d+)/gi;
 
       restored = restored.replace(pattern, (match, digits) => {
         const canonicalKey = `${this.tokenPrefix}${digits}`;
@@ -158,7 +191,7 @@
         'FOOTER', 'ASIDE', 'PAPER-DICT-HOST', 'PAPERDICT-BILINGUAL-CAPSULE-HOST'
       ]);
 
-      this.refHeadingRegex = /^\s*(?:\d+[\.\s]*)?(?:references|bibliography|works\s+cited|literature\s+cited|citations)\b/i;
+      this.refHeadingRegex = /^\s*(?:(?:\[\d+\]|[0-9]+|[IVXLCDM]+)[\.\s\-]*)?(?:references|bibliography|works\s+cited|literature\s+cited|citations)(?:\s*(?:and|&)\s*(?:notes|sources|citations|references|further\s+reading))?\s*[:\.]?\s*$/i;
       this.excludedClassIdRegex = /(reference|bibliography|biblio|ref-list|footnote|author-notes|header|navbar|sidebar|footer|menu|comment|pager|pagination|disclaimer|copyright|doi-box)/i;
     }
 
@@ -191,7 +224,9 @@
         if (this.excludedTags.has(tag)) return true;
 
         const id = cur.id || '';
-        const className = typeof cur.className === 'string' ? cur.className : '';
+        const className = typeof cur.className === 'string'
+          ? cur.className
+          : (cur.getAttribute ? cur.getAttribute('class') || '' : '');
 
         if (this.excludedClassIdRegex.test(id) || this.excludedClassIdRegex.test(className)) {
           return true;
@@ -274,24 +309,31 @@
 
       const eligible = [];
       let inReferenceSection = false;
+      let refHeadingLevel = 2;
 
       for (const el of candidates) {
         const text = (el.innerText || el.textContent || '').trim();
+        const tag = el.tagName.toUpperCase();
+        const isHeading = tag.startsWith('H') && tag.length === 2;
 
         // Detect entry into References section
-        if (['H1', 'H2', 'H3', 'H4', 'H5', 'H6'].includes(el.tagName.toUpperCase())) {
-          if (this.isReferenceHeading(text)) {
-            inReferenceSection = true;
-            continue;
-          }
+        if (isHeading && this.isReferenceHeading(text)) {
+          inReferenceSection = true;
+          refHeadingLevel = parseInt(tag.charAt(1), 10) || 2;
+          continue;
         }
 
         if (inReferenceSection) {
-          // If we reach another major heading that is not references, maybe section ended
-          if (['H1', 'H2'].includes(el.tagName.toUpperCase()) && !this.isReferenceHeading(text)) {
-            inReferenceSection = false;
+          // If we reach another section heading at or above the reference level, reference section ended
+          if (isHeading && !this.isReferenceHeading(text)) {
+            const level = parseInt(tag.charAt(1), 10) || 2;
+            if (level <= refHeadingLevel || level <= 2) {
+              inReferenceSection = false;
+            } else {
+              continue;
+            }
           } else {
-            continue; // Skip references
+            continue; // Skip all items inside references
           }
         }
 
@@ -842,6 +884,11 @@
     activateBilingualView() {
       this.elements = this.filter.findContentElements(document);
 
+      // Cleanly re-observe elements
+      if (this.observer) {
+        this.observer.disconnect();
+      }
+
       for (const el of this.elements) {
         if (!this.elementStateMap.has(el)) {
           this.elementStateMap.set(el, { state: 'idle', transEl: null });
@@ -857,7 +904,27 @@
     }
 
     restoreOriginalView() {
-      // Remove or hide translation elements
+      // 1. Disconnect observer to avoid background viewport tracking during original reading
+      if (this.observer) {
+        this.observer.disconnect();
+      }
+
+      // 2. Clear translation queue
+      this.queue = [];
+
+      // 3. Reset uncompleted queued items to idle and clean temporary loading shimmer
+      for (const el of this.elements) {
+        const info = this.elementStateMap.get(el);
+        if (info && info.state === 'queued') {
+          info.state = 'idle';
+          if (info.transEl && info.transEl.classList.contains('pd-bilingual-loading')) {
+            info.transEl.remove();
+            info.transEl = null;
+          }
+        }
+      }
+
+      // 4. Hide all translation elements
       this.applyDisplayModeToAll();
       this.updateCapsuleStats();
     }
@@ -868,20 +935,20 @@
         if (!info) continue;
 
         if (this.mode === 'chinese') {
-          el.classList.add('pd-orig-hidden');
+          if (el.classList) el.classList.add('pd-orig-hidden');
           if (info.transEl) {
             info.transEl.style.display = 'block';
             info.transEl.classList.add('full-chinese');
           }
         } else if (this.mode === 'bilingual') {
-          el.classList.remove('pd-orig-hidden');
+          if (el.classList) el.classList.remove('pd-orig-hidden');
           if (info.transEl) {
             info.transEl.style.display = 'block';
             info.transEl.classList.remove('full-chinese');
           }
         } else {
           // Original mode
-          el.classList.remove('pd-orig-hidden');
+          if (el.classList) el.classList.remove('pd-orig-hidden');
           if (info.transEl) {
             info.transEl.style.display = 'none';
           }
@@ -1019,15 +1086,15 @@
       info.transEl.innerHTML = transHtml;
 
       if (this.mode === 'chinese') {
-        el.classList.add('pd-orig-hidden');
+        if (el.classList) el.classList.add('pd-orig-hidden');
         info.transEl.classList.add('full-chinese');
         info.transEl.style.display = 'block';
       } else if (this.mode === 'bilingual') {
-        el.classList.remove('pd-orig-hidden');
+        if (el.classList) el.classList.remove('pd-orig-hidden');
         info.transEl.classList.remove('full-chinese');
         info.transEl.style.display = 'block';
       } else {
-        el.classList.remove('pd-orig-hidden');
+        if (el.classList) el.classList.remove('pd-orig-hidden');
         info.transEl.style.display = 'none';
       }
     }
@@ -1081,6 +1148,15 @@
 
     // Auto-instantiate when running in browser web page
     if (typeof window !== 'undefined' && typeof document !== 'undefined' && typeof window.CustomEvent === 'function') {
+      // Do not auto-instantiate the floating capsule manager inside the dedicated PDF reader page
+      const isReaderPage = window.location && (
+        window.location.pathname.includes('/reader/reader.html') ||
+        window.location.href.includes('reader/reader.html')
+      );
+      if (isReaderPage) {
+        return;
+      }
+
       const manager = new PaperBilingualManager();
       global.paperBilingualManager = manager;
 

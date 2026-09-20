@@ -445,6 +445,19 @@
     if (btnModeBi) btnModeBi.classList.toggle('active', mode === 'bilingual');
     if (btnModeZh) btnModeZh.classList.toggle('active', mode === 'chinese');
 
+    if (readerBilingualStatus) {
+      if (mode === 'bilingual') {
+        readerBilingualStatus.textContent = '双语对照已开启';
+        readerBilingualStatus.style.color = '#60a5fa';
+      } else if (mode === 'chinese') {
+        readerBilingualStatus.textContent = '纯中文速读已开启';
+        readerBilingualStatus.style.color = '#4ade80';
+      } else {
+        readerBilingualStatus.textContent = '原版英文排版';
+        readerBilingualStatus.style.color = '#94a3b8';
+      }
+    }
+
     // Update all page bilingual panels
     const panels = document.querySelectorAll('.pdf-page-bilingual');
     panels.forEach((p) => {
