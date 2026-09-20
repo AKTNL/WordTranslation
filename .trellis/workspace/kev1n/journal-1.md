@@ -71,11 +71,16 @@ Fixed formula-currency collisions in FormulaProtector, enhanced observer teardow
 
 | Hash | Message |
 |------|---------|
-| `33d49ac` | (see git log) |
+| `33d49ac` | fix(bilingual): resolve formula currency collision, observer teardown, and reader capsule duplication |
+| `ec3ad68` | docs(spec): document formula protection and observer lifecycle quality standards |
+| `c88545f` | chore(release): bump version to 1.0.1 for Phase 2 in-situ reader release |
+
+### Release
+- 打上正式版本标签 `v1.0.1` 并推送至 GitHub 触发自动化 Release 打包发布。
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] 68 项单元测试全部通过 (`node tests/test_extension.js`)。
 
 ### Status
 
@@ -83,4 +88,5 @@ Fixed formula-currency collisions in FormulaProtector, enhanced observer teardow
 
 ### Next Steps
 
-- None - task complete
+- None - v1.0.1 published
+
