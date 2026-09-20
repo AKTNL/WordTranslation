@@ -119,10 +119,43 @@ assert(isPdfUrl('https://openreview.net/pdf?id=B1lTeu8ye'), 'OpenReview PDF reco
 assert(!isPdfUrl('https://arxiv.org/abs/1706.03762'), 'Abstract page is not recognized as PDF');
 assert(!isPdfUrl('chrome-extension://abc/reader/reader.html?file=xyz'), 'Reader URL is not intercepted');
 
-// 5. Test Code Syntax / Integrity of all JS files
-console.log('\n[Test 5: JS Files Syntax Validation]');
+// 5. Test Phase 2 FormulaProtector & AcademicFilter
+console.log('\n[Test 5: FormulaProtector & AcademicFilter (Phase 2)]');
+const { FormulaProtector, AcademicFilter } = require('../extension/bilingual.js');
+
+assert(typeof FormulaProtector === 'function', 'FormulaProtector is exported');
+assert(typeof AcademicFilter === 'function', 'AcademicFilter is exported');
+
+if (typeof FormulaProtector === 'function') {
+  const fp = new FormulaProtector();
+
+  // Test LaTeX protection
+  const rawLatex = 'Let $E = mc^2$ and $$\\mathcal{L} = \\sum_{i=1}^n x_i$$ be the main loss.';
+  const pLatex = fp.protect(rawLatex);
+  assert(pLatex.tokenMap.size === 2, `FormulaProtector tokenized 2 formulas (found: ${pLatex.tokenMap.size})`);
+  assert(!pLatex.protectedText.includes('mc^2'), 'Formula content replaced by token');
+  
+  // Test restoration
+  const simulatedTranslated = pLatex.protectedText.replace('be the main loss', '作为主要损失函数');
+  const restored = fp.restore(simulatedTranslated, pLatex.tokenMap);
+  assert(restored.includes('$E = mc^2$'), 'Inline formula accurately restored');
+  assert(restored.includes('$$\\mathcal{L} = \\sum_{i=1}^n x_i$$'), 'Display formula accurately restored');
+}
+
+if (typeof AcademicFilter === 'function') {
+  const filter = new AcademicFilter();
+  
+  // Test reference heading recognition
+  assert(filter.isReferenceHeading('References'), 'References heading matched');
+  assert(filter.isReferenceHeading('5. Bibliography and Citations'), 'Bibliography heading matched');
+  assert(!filter.isReferenceHeading('2. Method and Theoretical Formulation'), 'Method heading not matched as reference');
+}
+
+// 6. Test Code Syntax / Integrity of all JS files
+console.log('\n[Test 6: JS Files Syntax Validation]');
 const jsFiles = [
   'extension/background.js',
+  'extension/bilingual.js',
   'extension/content.js',
   'extension/dict_service.js',
   'extension/popup/popup.js',

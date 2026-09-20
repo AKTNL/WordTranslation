@@ -1,0 +1,183 @@
+/**
+ * PaperDict - Academic In-situ Bilingual & Full Chinese Reader Styles
+ * Injected into academic web pages to format in-situ translations seamlessly.
+ */
+
+/* Translated Paragraph Container in Bilingual Mode */
+.pd-bilingual-trans {
+  display: block !important;
+  margin-top: 8px !important;
+  margin-bottom: 18px !important;
+  padding: 10px 16px !important;
+  background-color: #f8fafc !important;
+  border-left: 3.5px solid #3b82f6 !important;
+  border-radius: 0 8px 8px 0 !important;
+  color: #1e293b !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif !important;
+  font-size: 0.96em !important;
+  line-height: 1.75 !important;
+  letter-spacing: 0.2px !important;
+  text-align: justify !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  opacity: 1 !important;
+  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  animation: pdFadeSlideIn 0.28s ease-out forwards !important;
+}
+
+/* Headings Translation (H1-H6) in Bilingual Mode */
+h1 + .pd-bilingual-trans,
+h2 + .pd-bilingual-trans,
+h3 + .pd-bilingual-trans,
+h4 + .pd-bilingual-trans,
+h5 + .pd-bilingual-trans,
+h6 + .pd-bilingual-trans {
+  margin-top: 4px !important;
+  margin-bottom: 14px !important;
+  padding: 6px 14px !important;
+  background-color: #eff6ff !important;
+  border-left-color: #2563eb !important;
+  font-weight: 600 !important;
+  font-size: 0.9em !important;
+  color: #1d4ed8 !important;
+}
+
+/* Shimmer Loading State Placeholder */
+.pd-bilingual-loading {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin-top: 6px !important;
+  margin-bottom: 12px !important;
+  padding: 8px 14px !important;
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%) !important;
+  background-size: 200% 100% !important;
+  animation: pdShimmer 1.5s infinite !important;
+  border-left: 3px solid #94a3b8 !important;
+  border-radius: 0 6px 6px 0 !important;
+  font-size: 12.5px !important;
+  color: #64748b !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  user-select: none !important;
+}
+
+.pd-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #cbd5e1;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: pdSpin 0.8s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* Protected Math Formula in Translated Text */
+.pd-math-formula {
+  display: inline-block !important;
+  vertical-align: middle !important;
+  margin: 0 2px !important;
+  padding: 1px 4px !important;
+  background: rgba(239, 246, 255, 0.7) !important;
+  border-radius: 4px !important;
+  font-family: inherit !important;
+  color: inherit !important;
+}
+
+/* Full Chinese Mode (纯享中文模式) */
+html[data-paperdict-mode="chinese"] .pd-orig-hidden {
+  display: none !important;
+}
+
+html[data-paperdict-mode="chinese"] .pd-bilingual-trans {
+  background: transparent !important;
+  border-left: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 16px !important;
+  font-size: 1.02em !important;
+  line-height: 1.8 !important;
+  color: inherit !important;
+}
+
+html[data-paperdict-mode="chinese"] h1 + .pd-bilingual-trans {
+  font-size: 1.8em !important;
+  font-weight: 700 !important;
+  color: inherit !important;
+}
+
+html[data-paperdict-mode="chinese"] h2 + .pd-bilingual-trans {
+  font-size: 1.4em !important;
+  font-weight: 600 !important;
+  color: inherit !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  padding-bottom: 4px !important;
+  margin-top: 24px !important;
+}
+
+html[data-paperdict-mode="chinese"] h3 + .pd-bilingual-trans {
+  font-size: 1.2em !important;
+  font-weight: 600 !important;
+  color: inherit !important;
+}
+
+/* Restore Mode (原版英文模式 - 隐藏所有译文) */
+html[data-paperdict-mode="original"] .pd-bilingual-trans,
+html[data-paperdict-mode="original"] .pd-bilingual-loading {
+  display: none !important;
+}
+
+html[data-paperdict-mode="original"] .pd-orig-hidden {
+  display: revert !important;
+}
+
+/* Transient Mode Toast Notification */
+.pd-mode-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(8px);
+  color: #ffffff;
+  padding: 10px 20px;
+  border-radius: 24px;
+  font-size: 13.5px;
+  font-weight: 500;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  z-index: 2147483647;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pd-mode-toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Animations */
+@keyframes pdFadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pdShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes pdSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

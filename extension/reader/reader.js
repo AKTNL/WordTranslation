@@ -31,10 +31,23 @@
   const btnFitWidth = document.getElementById('btn-fit-width');
   const zoomValueSpan = document.getElementById('zoom-value');
 
+  // Bilingual Controls
+  const bilingualControls = document.getElementById('bilingual-controls');
+  const btnModeOrig = document.getElementById('btn-reader-mode-orig');
+  const btnModeBi = document.getElementById('btn-reader-mode-bi');
+  const btnModeZh = document.getElementById('btn-reader-mode-zh');
+  const readerBilingualStatus = document.getElementById('reader-bilingual-status');
+
+  const formulaProtector = typeof FormulaProtector !== 'undefined' ? new FormulaProtector() : null;
+  const dictService = typeof DictService !== 'undefined' ? new DictService() : null;
+
   let currentPdfDoc = null;
   let currentScale = 1.35;
   let totalPages = 0;
   let currentPage = 1;
+  let currentBilingualMode = 'original'; // 'original' | 'bilingual' | 'chinese'
+  const pageParagraphsMap = new Map(); // pageNumber -> [{ orig, trans, pDiv, transDiv }]
+  let bilingualObserver = null;
 
   // File loading
   if (fileInput) {
@@ -159,8 +172,10 @@
       viewerContainer.style.display = 'flex';
       pageControls.style.display = 'inline-flex';
       zoomControls.style.display = 'inline-flex';
+      if (bilingualControls) bilingualControls.style.display = 'inline-flex';
 
       pdfViewer.innerHTML = '';
+      pageParagraphsMap.clear();
 
       const loadingTask = pdfjsLib.getDocument({ data });
       currentPdfDoc = await loadingTask.promise;
@@ -220,7 +235,22 @@
     textLayerDiv.style.setProperty('--scale-factor', viewport.scale);
     pageDiv.appendChild(textLayerDiv);
 
-    pdfViewer.appendChild(pageDiv);
+    // Row wrapper for side-by-side bilingual reading
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'pdf-page-row';
+    rowDiv.id = `pdf-row-${pageNumber}`;
+    rowDiv.dataset.pageNumber = pageNumber;
+    rowDiv.appendChild(pageDiv);
+
+    // Bilingual side panel
+    const bilingualPanel = document.createElement('div');
+    bilingualPanel.className = `pdf-page-bilingual ${currentBilingualMode === 'chinese' ? 'full-chinese' : ''}`;
+    bilingualPanel.id = `pdf-bilingual-${pageNumber}`;
+    bilingualPanel.style.display = currentBilingualMode === 'original' ? 'none' : 'block';
+    bilingualPanel.style.minHeight = `${Math.floor(viewport.height)}px`;
+    rowDiv.appendChild(bilingualPanel);
+
+    pdfViewer.appendChild(rowDiv);
 
     // Render canvas
     await page.render(renderContext).promise;
@@ -233,7 +263,241 @@
       viewport: viewport,
       textDivs: []
     });
+
+    // Extract & cluster paragraphs for bilingual rendering
+    setupPageBilingualContent(pageNumber, textContent, bilingualPanel);
+
+    // Observe row for viewport lazy translation
+    if (bilingualObserver) {
+      bilingualObserver.observe(rowDiv);
+    }
   }
+
+  function setupPageBilingualContent(pageNumber, textContent, panel) {
+    const paras = clusterPdfTextIntoParagraphs(textContent);
+    const paraItems = [];
+    panel.innerHTML = '';
+
+    if (paras.length === 0) {
+      panel.innerHTML = '<p style="color:#94a3b8;font-size:13px;text-align:center;padding-top:40px;">（此页面未检测到可提取的连续学术正文段落）</p>';
+      pageParagraphsMap.set(pageNumber, []);
+      return;
+    }
+
+    paras.forEach((pText, idx) => {
+      const pDiv = document.createElement('div');
+      pDiv.className = 'pdf-bilingual-p';
+
+      const origDiv = document.createElement('div');
+      origDiv.className = 'pdf-p-orig';
+      origDiv.textContent = pText;
+
+      const transDiv = document.createElement('div');
+      transDiv.className = 'pdf-p-trans';
+      transDiv.innerHTML = '<span style="color:#94a3b8;font-size:12px;">待视口加载...</span>';
+
+      pDiv.appendChild(origDiv);
+      pDiv.appendChild(transDiv);
+      panel.appendChild(pDiv);
+
+      paraItems.push({
+        orig: pText,
+        trans: null,
+        status: 'idle',
+        pDiv,
+        transDiv
+      });
+    });
+
+    pageParagraphsMap.set(pageNumber, paraItems);
+
+    // If currently in bilingual/chinese mode and page is visible, start translation
+    if (currentBilingualMode !== 'original' && pageNumber === currentPage) {
+      translatePageParagraphs(pageNumber);
+    }
+  }
+
+  function clusterPdfTextIntoParagraphs(textContent) {
+    if (!textContent || !textContent.items || textContent.items.length === 0) {
+      return [];
+    }
+
+    // Group items into lines
+    const lines = [];
+    let currentLine = [];
+    let currentY = null;
+
+    const items = textContent.items.filter(item => item.str && item.str.trim().length > 0);
+
+    for (const item of items) {
+      const y = item.transform ? Math.round(item.transform[5]) : 0;
+      if (currentY === null || Math.abs(y - currentY) > 3) {
+        if (currentLine.length > 0) {
+          lines.push({ y: currentY, text: currentLine.map(i => i.str).join(' ').trim() });
+        }
+        currentLine = [item];
+        currentY = y;
+      } else {
+        currentLine.push(item);
+      }
+    }
+    if (currentLine.length > 0) {
+      lines.push({ y: currentY, text: currentLine.map(i => i.str).join(' ').trim() });
+    }
+
+    // Cluster lines into paragraphs
+    const paragraphs = [];
+    let currentPara = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const prevLine = i > 0 ? lines[i - 1] : null;
+
+      if (prevLine) {
+        const lineGap = Math.abs(prevLine.y - line.y);
+        const isLargeGap = lineGap > 22;
+        const prevEndsWithPeriod = /[.!?:]$/.test(prevLine.text.trim());
+
+        if (isLargeGap || (prevEndsWithPeriod && /^[A-Z0-9]/.test(line.text.trim()) && currentPara.join(' ').length > 80)) {
+          if (currentPara.length > 0) {
+            const raw = currentPara.join('\n');
+            const cleaned = dictService ? dictService.cleanPaperText(raw, true) : raw;
+            if (cleaned.length >= 15 && /[a-zA-Z]{2,}/.test(cleaned)) {
+              paragraphs.push(cleaned);
+            }
+          }
+          currentPara = [line.text];
+          continue;
+        }
+      }
+      currentPara.push(line.text);
+    }
+
+    if (currentPara.length > 0) {
+      const raw = currentPara.join('\n');
+      const cleaned = dictService ? dictService.cleanPaperText(raw, true) : raw;
+      if (cleaned.length >= 15 && /[a-zA-Z]{2,}/.test(cleaned)) {
+        paragraphs.push(cleaned);
+      }
+    }
+
+    return paragraphs;
+  }
+
+  async function translatePageParagraphs(pageNumber) {
+    const items = pageParagraphsMap.get(pageNumber);
+    if (!items || items.length === 0) return;
+
+    if (readerBilingualStatus) {
+      readerBilingualStatus.textContent = `第 ${pageNumber} 页翻译中...`;
+      readerBilingualStatus.style.color = '#60a5fa';
+    }
+
+    for (const item of items) {
+      if (item.status === 'done') continue;
+      item.status = 'translating';
+      item.transDiv.innerHTML = '<div class="pdf-p-loading">正在速译学术段落...</div>';
+
+      let textToTranslate = item.orig;
+      let tokenMap = null;
+
+      if (formulaProtector) {
+        const pRes = formulaProtector.protect(item.orig);
+        textToTranslate = pRes.protectedText;
+        tokenMap = pRes.tokenMap;
+      }
+
+      try {
+        const res = await chrome.runtime.sendMessage({
+          type: 'TRANSLATE_ONLINE',
+          text: textToTranslate
+        });
+
+        if (res && res.success && res.translation) {
+          let finalText = res.translation;
+          if (formulaProtector && tokenMap) {
+            finalText = formulaProtector.restore(res.translation, tokenMap);
+          }
+          item.trans = finalText;
+          item.transDiv.innerHTML = finalText;
+          item.status = 'done';
+        } else {
+          item.transDiv.innerHTML = `<span style="color:#f87171;font-size:12px;">(翻译超时，请稍后重试)</span>`;
+          item.status = 'idle';
+        }
+      } catch (e) {
+        item.transDiv.innerHTML = `<span style="color:#f87171;font-size:12px;">(网络超时)</span>`;
+        item.status = 'idle';
+      }
+    }
+
+    if (readerBilingualStatus) {
+      readerBilingualStatus.textContent = `就绪`;
+      readerBilingualStatus.style.color = '#94a3b8';
+    }
+  }
+
+  function setReaderBilingualMode(mode) {
+    currentBilingualMode = mode;
+
+    // Update buttons
+    if (btnModeOrig) btnModeOrig.classList.toggle('active', mode === 'original');
+    if (btnModeBi) btnModeBi.classList.toggle('active', mode === 'bilingual');
+    if (btnModeZh) btnModeZh.classList.toggle('active', mode === 'chinese');
+
+    // Update all page bilingual panels
+    const panels = document.querySelectorAll('.pdf-page-bilingual');
+    panels.forEach((p) => {
+      if (mode === 'original') {
+        p.style.display = 'none';
+      } else {
+        p.style.display = 'block';
+        p.classList.toggle('full-chinese', mode === 'chinese');
+      }
+    });
+
+    if (mode !== 'original') {
+      // Trigger translation for currently visible page
+      translatePageParagraphs(currentPage);
+    }
+  }
+
+  // Setup Viewport IntersectionObserver for lazy translating PDF pages
+  if (typeof IntersectionObserver !== 'undefined') {
+    bilingualObserver = new IntersectionObserver((entries) => {
+      if (currentBilingualMode === 'original') return;
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          const pageNum = parseInt(entry.target.dataset.pageNumber, 10);
+          if (pageNum) {
+            translatePageParagraphs(pageNum);
+          }
+        }
+      }
+    }, {
+      root: viewerContainer,
+      rootMargin: '200px 0px 200px 0px',
+      threshold: 0.05
+    });
+  }
+
+  // Bind Mode Buttons
+  if (btnModeOrig) btnModeOrig.addEventListener('click', () => setReaderBilingualMode('original'));
+  if (btnModeBi) btnModeBi.addEventListener('click', () => setReaderBilingualMode('bilingual'));
+  if (btnModeZh) btnModeZh.addEventListener('click', () => setReaderBilingualMode('chinese'));
+
+  // Alt + B Shortcut in Reader
+  window.addEventListener('keydown', (e) => {
+    if (e.altKey && (e.key === 'b' || e.key === 'B' || e.code === 'KeyB')) {
+      e.preventDefault();
+      const modeCycle = {
+        original: 'bilingual',
+        bilingual: 'chinese',
+        chinese: 'original'
+      };
+      setReaderBilingualMode(modeCycle[currentBilingualMode] || 'bilingual');
+    }
+  }, true);
 
   function updateZoomDisplay() {
     zoomValueSpan.textContent = `${Math.round(currentScale * 100)}%`;

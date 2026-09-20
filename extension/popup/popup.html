@@ -62,6 +62,23 @@
       </div>
     </section>
 
+    <!-- Academic Full Paper Bilingual & Chinese Reader (Phase 2) -->
+    <section class="bilingual-reader-section">
+      <div class="section-header-row">
+        <h2 class="section-title">论文就地全文速读</h2>
+        <span class="shortcut-tip-badge">快捷键 Alt+B</span>
+      </div>
+      <div class="bilingual-mode-selector">
+        <button id="btn-popup-orig" class="btn-mode-tab active" data-mode="original" title="原版英文排版">原版英文</button>
+        <button id="btn-popup-bi" class="btn-mode-tab" data-mode="bilingual" title="双语对照模式 (Alt+B)">双语对照</button>
+        <button id="btn-popup-zh" class="btn-mode-tab" data-mode="chinese" title="纯中文速读">纯享中文</button>
+      </div>
+      <div class="bilingual-tab-status" id="bilingual-tab-status">
+        <span class="status-dot"></span>
+        <span id="bilingual-status-text">点击模式切换当前标签页论文排版</span>
+      </div>
+    </section>
+
     <!-- Settings Switch Toggles -->
     <section class="settings-section">
       <h2 class="section-title">功能开关</h2>
@@ -73,6 +90,17 @@
         </div>
         <label class="switch">
           <input type="checkbox" id="toggle-enabled">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-info">
+          <span class="setting-label">默认开启双语对照</span>
+          <span class="setting-desc">访问学术网页自动就地呈现双语译文</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggle-default-bilingual">
           <span class="slider"></span>
         </label>
       </div>

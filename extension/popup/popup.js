@@ -14,6 +14,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const toggleAutoAudio = document.getElementById('toggle-autoaudio');
   const toggleOnline = document.getElementById('toggle-online');
   const toggleInterceptPdf = document.getElementById('toggle-interceptpdf');
+  const toggleDefaultBilingual = document.getElementById('toggle-default-bilingual');
+
+  const btnPopupOrig = document.getElementById('btn-popup-orig');
+  const btnPopupBi = document.getElementById('btn-popup-bi');
+  const btnPopupZh = document.getElementById('btn-popup-zh');
+  const bilingualStatusText = document.getElementById('bilingual-status-text');
 
   const pdfDetectBanner = document.getElementById('pdf-detect-banner');
   const btnConvertCurrentPdf = document.getElementById('btn-convert-current-pdf');
@@ -43,7 +49,8 @@ document.addEventListener('DOMContentLoaded', () => {
     deHyphen: true,
     autoAudio: false,
     onlineFallback: true,
-    autoInterceptPdf: true
+    autoInterceptPdf: true,
+    bilingualDefault: false
   };
 
   chrome.storage.sync.get(defaultSettings, (items) => {
@@ -53,6 +60,9 @@ document.addEventListener('DOMContentLoaded', () => {
     toggleOnline.checked = items.onlineFallback !== false;
     if (toggleInterceptPdf) {
       toggleInterceptPdf.checked = items.autoInterceptPdf !== false;
+    }
+    if (toggleDefaultBilingual) {
+      toggleDefaultBilingual.checked = items.bilingualDefault === true;
     }
   });
 
@@ -74,6 +84,55 @@ document.addEventListener('DOMContentLoaded', () => {
       chrome.storage.sync.set({ autoInterceptPdf: toggleInterceptPdf.checked });
     });
   }
+  if (toggleDefaultBilingual) {
+    toggleDefaultBilingual.addEventListener('change', () => {
+      chrome.storage.sync.set({ bilingualDefault: toggleDefaultBilingual.checked });
+    });
+  }
+
+  // Check active tab bilingual status
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs && tabs[0] && tabs[0].id) {
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_BILINGUAL_MODE' }, (res) => {
+        if (!chrome.runtime.lastError && res && res.mode) {
+          updatePopupBilingualUI(res.mode, res.total, res.translated);
+        }
+      });
+    }
+  });
+
+  function updatePopupBilingualUI(mode, total, translated) {
+    if (btnPopupOrig) btnPopupOrig.classList.toggle('active', mode === 'original');
+    if (btnPopupBi) btnPopupBi.classList.toggle('active', mode === 'bilingual');
+    if (btnPopupZh) btnPopupZh.classList.toggle('active', mode === 'chinese');
+
+    if (bilingualStatusText) {
+      if (mode === 'bilingual') {
+        bilingualStatusText.textContent = total ? `双语对照就绪 (已译 ${translated || 0} / ${total} 段)` : '双语对照已激活';
+      } else if (mode === 'chinese') {
+        bilingualStatusText.textContent = total ? `纯中文速读就绪 (已译 ${translated || 0} / ${total} 段)` : '纯中文速读已激活';
+      } else {
+        bilingualStatusText.textContent = '当前为原版英文排版';
+      }
+    }
+  }
+
+  function setTabBilingualMode(mode) {
+    updatePopupBilingualUI(mode);
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs && tabs[0] && tabs[0].id) {
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'SET_BILINGUAL_MODE', mode }, (res) => {
+          if (res && res.mode) {
+            updatePopupBilingualUI(res.mode);
+          }
+        });
+      }
+    });
+  }
+
+  if (btnPopupOrig) btnPopupOrig.addEventListener('click', () => setTabBilingualMode('original'));
+  if (btnPopupBi) btnPopupBi.addEventListener('click', () => setTabBilingualMode('bilingual'));
+  if (btnPopupZh) btnPopupZh.addEventListener('click', () => setTabBilingualMode('chinese'));
 
   // Detect if active tab is a PDF
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

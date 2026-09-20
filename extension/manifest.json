@@ -37,10 +37,14 @@
       "matches": [
         "<all_urls>"
       ],
+      "css": [
+        "bilingual.css"
+      ],
       "js": [
         "dict/academic_dict.js",
         "dict_service.js",
-        "content.js"
+        "content.js",
+        "bilingual.js"
       ],
       "run_at": "document_end",
       "all_frames": true
@@ -51,7 +55,8 @@
       "resources": [
         "icons/*",
         "dict/*",
-        "reader/*"
+        "reader/*",
+        "bilingual.css"
       ],
       "matches": [
         "<all_urls>"

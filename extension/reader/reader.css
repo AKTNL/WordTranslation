@@ -30,10 +30,52 @@ body {
   flex-shrink: 0;
 }
 
-.toolbar-left, .toolbar-center, .toolbar-right {
+.toolbar-left, .toolbar-center, .toolbar-right, .toolbar-bilingual {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* Bilingual Toolbar Controls */
+.reader-mode-group {
+  display: flex;
+  background: #202224;
+  padding: 2px;
+  border-radius: 6px;
+  gap: 2px;
+  border: 1px solid #474d52;
+}
+
+.reader-mode-btn {
+  background: transparent;
+  color: #94a3b8;
+  border: none;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.reader-mode-btn:hover {
+  color: #f8fafc;
+}
+
+.reader-mode-btn.active {
+  background: #2563eb;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.reader-status-badge {
+  font-size: 11px;
+  color: #94a3b8;
+  background: #202224;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid #3a3f44;
 }
 
 .logo-wrapper {
@@ -210,11 +252,77 @@ body {
   padding: 20px 10px;
 }
 
-.pdf-viewer {
+/* PDF Page Row & Bilingual Side Panel */
+.pdf-page-row {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-  align-items: center;
+  gap: 20px;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+}
+
+.pdf-page-bilingual {
+  background-color: #ffffff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  padding: 24px 28px;
+  width: 520px;
+  max-width: 45vw;
+  box-sizing: border-box;
+  text-align: justify;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #1e293b;
+  animation: pdFadeIn 0.2s ease-out;
+}
+
+.pdf-bilingual-p {
+  margin-bottom: 18px;
+}
+
+.pdf-p-orig {
+  color: #475569;
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 14px;
+  line-height: 1.6;
+  margin-bottom: 6px;
+}
+
+.pdf-p-trans {
+  background-color: #f8fafc;
+  border-left: 3px solid #3b82f6;
+  padding: 8px 12px;
+  border-radius: 0 6px 6px 0;
+  color: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+.pdf-p-loading {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: pdShimmer 1.5s infinite;
+  border-left: 3px solid #cbd5e1;
+  padding: 6px 10px;
+  border-radius: 0 4px 4px 0;
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 4px;
+}
+
+/* Full Chinese Mode in PDF Reader */
+.pdf-page-bilingual.full-chinese .pdf-p-orig {
+  display: none !important;
+}
+
+.pdf-page-bilingual.full-chinese .pdf-p-trans {
+  background: transparent !important;
+  border-left: none !important;
+  padding: 0 !important;
+  font-size: 14.5px !important;
+  line-height: 1.75 !important;
+  color: #0f172a !important;
 }
 
 /* PDF Page Container */

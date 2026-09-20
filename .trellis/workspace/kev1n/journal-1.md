@@ -5,7 +5,7 @@
 
 ---
 
-## 2026-09-19: 划词翻译悬浮查词工具 (PaperDict) 实现与 PDF 深度优化
+## 2026-09-19: 划词翻译悬浮查词工具 (PaperDict) 实现、发布与自动化
 
 ### Completed
 - 完成 Chrome / Edge 扩展完整工程构建 (`extension/` 目录，遵循 Manifest V3 规范)。
@@ -22,4 +22,32 @@
   - 为 Chrome 默认 PDF 页面增加 **右键菜单翻译弹窗**（`paperdict-selection-translate`）作为兜底，即使在 Chrome 默认阅读器中选中文本右键也能秒查。
   - 在 `popup.html` 中增加 PDF 识别横幅（检测到当前处于 PDF 标签页时，提供一键转入专属阅读器按钮）。
 - 编写并扩充自动化测试套件 (`tests/test_extension.js` 和 `tests/test_translation.js`)，41 项测试用例全部通过。
-- 更新项目文档 (`README.md`)，详细说明 PDF 阅读与划选查词的 3 种使用方案。
+- 配置 GitHub Actions 自动化 CI/CD 工作流 (`.github/workflows/release.yml`)：
+  - 支持打 Tag（`v*`）时自动运行自动化测试套件。
+  - 自动将扩展目录打包成 `paperdict-v*.zip` 产物。
+  - 自动创建 GitHub Release 并附带精美完整的中文安装指南与更新日志。
+- 打上首个正式版本标签 `v1.0.0` 并成功推送到 GitHub 远程仓库触发自动化发布。
+- 更新项目文档 (`README.md`)，增加 Release 徽标与小白一键下载安装引导。
+
+## 2026-09-19: Phase 2 论文就地全文双语对照与全中文速读 (In-situ Reader)
+
+### Completed
+- 研发并实现论文就地全文双语与纯中文速读引擎：
+  - `extension/bilingual.js` 与 `extension/bilingual.css`：
+    - `FormulaProtector`：数学公式识别占位保护与精准还原（保护 LaTeX `$公式$`、`$$行间公式$$`、`<math>`、KaTeX、MathJax，翻译前后零乱码）。
+    - `AcademicFilter`：智能过滤参考文献（References/Bibliography）、代码块（`<pre><code>`）、页眉页脚、导航栏。
+    - `CapsuleUI`：右侧常驻可折叠、可拖拽悬浮控制胶囊，支持进度展示与模式切换。
+    - `PaperBilingualManager`：支持快捷键 `Alt+B` 循环切换（原版英文 -> 双语对照 -> 纯享中文），视口懒加载（`IntersectionObserver`）随滚动平滑流式翻译。
+- 升级 PaperDict 学术 PDF 阅读器 (`reader.html`, `reader.css`, `reader.js`)：
+  - 增加双语阅读模式切换工具栏按钮（原版 / 双语对照 / 纯享中文）及实时翻译状态徽标。
+  - PDF 文本层段落聚类与左右对照布局渲染，支持视口滚动懒加载段落译文。
+- 升级扩展弹窗 (`popup.html`, `popup.css`, `popup.js`)：
+  - 新增“论文就地全文速读”快捷控制入口，可直接在弹窗内切换当前标签页论文排版。
+  - 新增“默认开启双语对照”全局配置项（同步至 `chrome.storage.sync`）。
+- 升级 Service Worker (`background.js`)：
+  - 增强翻译请求缓存与长句/公式占位符翻译策略。
+  - 增加右键菜单快捷开启双语阅读选项。
+- 扩充测试套件与学术仿真测试页面：
+  - `test-paper.html`：新增 LaTeX、KaTeX、MathML、Python 代码块与参考文献区，全方位验证公式保护与智能过滤。
+  - `tests/test_extension.js`：新增 `FormulaProtector` 与 `AcademicFilter` 单元测试，测试用例扩充至 52 项且全部通过。
+- 更新 `README.md`：详细记录 Phase 2 核心特性、使用场景、快捷键与全新架构图。

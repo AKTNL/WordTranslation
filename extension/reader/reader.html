@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>PaperDict - 学术论文 PDF 阅读器</title>
+  <link rel="stylesheet" href="../bilingual.css">
   <link rel="stylesheet" href="reader.css">
 </head>
 <body>
@@ -26,6 +27,16 @@
         页码 <input type="number" id="page-num" value="1" min="1"> / <span id="page-count">-</span>
       </span>
       <button id="btn-next-page" class="tool-btn" title="下一页">▶</button>
+    </div>
+
+    <!-- Bilingual / Full Chinese Mode Controls -->
+    <div class="toolbar-bilingual" id="bilingual-controls" style="display: none;">
+      <div class="reader-mode-group">
+        <button id="btn-reader-mode-orig" class="reader-mode-btn active" title="原版英文排版">原版</button>
+        <button id="btn-reader-mode-bi" class="reader-mode-btn" title="双语对照速读 (Alt+B)">双语对照</button>
+        <button id="btn-reader-mode-zh" class="reader-mode-btn" title="纯中文速读">纯享中文</button>
+      </div>
+      <span id="reader-bilingual-status" class="reader-status-badge">视口翻译就绪</span>
     </div>
 
     <div class="toolbar-right" id="zoom-controls" style="display: none;">
@@ -61,6 +72,7 @@
   <!-- Dict & Content Script for Selection Translation -->
   <script src="../dict/academic_dict.js"></script>
   <script src="../dict_service.js"></script>
+  <script src="../bilingual.js"></script>
   <script src="../content.js"></script>
   <!-- Reader Controller -->
   <script src="reader.js"></script>

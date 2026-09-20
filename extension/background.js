@@ -49,6 +49,13 @@ chrome.runtime.onInstalled.addListener(async () => {
       title: '用 PaperDict 阅读器打开此论文 (开启划词即弹)',
       contexts: ['page', 'link']
     });
+
+    // 3. Toggle In-situ Full Paper Bilingual Reader
+    chrome.contextMenus.create({
+      id: 'paperdict-toggle-bilingual',
+      title: 'PaperDict: 切换论文双语对照 / 纯中文速读 (Alt+B)',
+      contexts: ['page']
+    });
   });
 
   // Auto-inject content script into already open normal tabs
@@ -57,9 +64,13 @@ chrome.runtime.onInstalled.addListener(async () => {
     for (const tab of tabs) {
       if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) continue;
       if (isPdfUrl(tab.url)) continue; // Native PDF cannot receive content script
+      chrome.scripting.insertCSS({
+        target: { tabId: tab.id, allFrames: true },
+        files: ['bilingual.css']
+      }).catch(() => {});
       chrome.scripting.executeScript({
         target: { tabId: tab.id, allFrames: true },
-        files: ['dict/academic_dict.js', 'dict_service.js', 'content.js']
+        files: ['dict/academic_dict.js', 'dict_service.js', 'content.js', 'bilingual.js']
       }).catch(() => {});
     }
   } catch (err) {
@@ -114,7 +125,15 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
 
-  // 2. Selection translate
+  // 2. Toggle Bilingual / Full Chinese
+  if (info.menuItemId === 'paperdict-toggle-bilingual') {
+    if (tab && tab.id) {
+      chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_BILINGUAL_MODE' }).catch(() => {});
+    }
+    return;
+  }
+
+  // 3. Selection translate
   if (info.menuItemId === 'paperdict-selection-translate' && info.selectionText) {
     const rawText = info.selectionText.trim();
     if (!tab || !tab.id) return;
@@ -176,8 +195,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
+// In-memory cache for paragraph and sentence translations
+const translationMemoryCache = new Map();
+
 /**
- * Multi-engine online translation with automatic failover
+ * Multi-engine online translation with automatic failover and caching
  */
 async function handleOnlineTranslation(text) {
   if (!text || !text.trim()) {
@@ -185,6 +207,29 @@ async function handleOnlineTranslation(text) {
   }
 
   const query = text.trim();
+
+  // Check cache first
+  if (translationMemoryCache.has(query)) {
+    return {
+      success: true,
+      translation: translationMemoryCache.get(query),
+      source: 'PaperDict 本地缓存',
+      query
+    };
+  }
+
+  // If text contains formula tokens or is a long paragraph, prioritize Google Translate GTX
+  const hasFormulaToken = query.includes('PDMATH_');
+  const isLongParagraph = query.length > 200 || hasFormulaToken;
+
+  if (isLongParagraph) {
+    // Try Google Translate GTX first
+    const gtxResult = await tryGoogleTranslate(query);
+    if (gtxResult) {
+      translationMemoryCache.set(query, gtxResult.translation);
+      return gtxResult;
+    }
+  }
 
   // Try Engine 1: MyMemory Translation API (Fast, reliable, works without VPN)
   try {
@@ -200,6 +245,7 @@ async function handleOnlineTranslation(text) {
       if (data && data.responseData && data.responseData.translatedText) {
         const result = data.responseData.translatedText;
         if (result && !result.startsWith('MYMEMORY WARNING')) {
+          translationMemoryCache.set(query, result);
           return {
             success: true,
             translation: result,
@@ -214,6 +260,47 @@ async function handleOnlineTranslation(text) {
   }
 
   // Try Engine 2: Google Translate GTX endpoint (Free web API)
+  if (!isLongParagraph) {
+    const gtxResult = await tryGoogleTranslate(query);
+    if (gtxResult) {
+      translationMemoryCache.set(query, gtxResult.translation);
+      return gtxResult;
+    }
+  }
+
+  // Try Engine 3: Lingva public instance fallback
+  try {
+    const lUrl = `https://lingva.ml/api/v1/en/zh/${encodeURIComponent(query)}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    const res = await fetch(lUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.translation) {
+        translationMemoryCache.set(query, data.translation);
+        return {
+          success: true,
+          translation: data.translation,
+          source: '在线翻译',
+          query
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('Lingva engine failed:', e);
+  }
+
+  return {
+    success: false,
+    error: '网络暂不可用或无法连接翻译引擎，请稍后重试',
+    query
+  };
+}
+
+async function tryGoogleTranslate(query) {
   try {
     const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=${encodeURIComponent(query)}`;
     const controller = new AbortController();
@@ -239,34 +326,5 @@ async function handleOnlineTranslation(text) {
   } catch (e) {
     console.warn('Google Translate engine failed:', e);
   }
-
-  // Try Engine 3: Lingva public instance fallback
-  try {
-    const lUrl = `https://lingva.ml/api/v1/en/zh/${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-    const res = await fetch(lUrl, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.translation) {
-        return {
-          success: true,
-          translation: data.translation,
-          source: '在线翻译',
-          query
-        };
-      }
-    }
-  } catch (e) {
-    console.warn('Lingva engine failed:', e);
-  }
-
-  return {
-    success: false,
-    error: '网络暂不可用或无法连接翻译引擎，请稍后重试',
-    query
-  };
+  return null;
 }
