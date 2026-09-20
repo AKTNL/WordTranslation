@@ -86,7 +86,23 @@ Fixed formula-currency collisions in FormulaProtector, enhanced observer teardow
 
 [OK] **Completed**
 
+---
+
+## 2026-09-20 - Release v2.2.0 (PR #1 UX Refactor & Academic Vocabulary)
+
+### Summary
+
+- Reviewed and merged PR #1 (`EIR9264:main`), refactoring UX, card dragging/pinning, vocabulary book & Anki export, dark mode, persistent caching, and virtualized dual-column PDF reader.
+- Verified all 68 core tests and 21 UX diagnostics tests pass.
+- Updated release notes template in `.github/workflows/release.yml`.
+- Created Git tag `v2.2.0` and successfully published GitHub Release with `paperdict-v2.2.0.zip`.
+
+### Status
+
+[OK] **Completed**
+
 ### Next Steps
 
-- None - v1.0.1 published
+- None - v2.2.0 published
+
 
