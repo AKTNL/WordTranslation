@@ -43,6 +43,9 @@
       "js": [
         "dict/academic_dict.js",
         "dict_service.js",
+        "annotation_manager.js",
+        "glossary_extractor.js",
+        "citation_parser.js",
         "content.js",
         "bilingual.js"
       ],

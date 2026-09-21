@@ -41,6 +41,124 @@
 
   const formulaProtector = typeof FormulaProtector !== 'undefined' ? new FormulaProtector() : null;
   const dictService = typeof DictService !== 'undefined' ? new DictService() : null;
+  const annotationManager = typeof AnnotationManager !== 'undefined' ? new AnnotationManager() : null;
+  const citationParser = typeof CitationParser !== 'undefined' ? new CitationParser() : null;
+
+  // Reader Notes Elements
+  const btnReaderNotes = document.getElementById('btn-reader-notes');
+  const readerNotesCount = document.getElementById('reader-notes-count');
+  const readerNotesDrawer = document.getElementById('reader-notes-drawer');
+  const btnCloseNotesDrawer = document.getElementById('btn-close-notes-drawer');
+  const btnDrawerExportMd = document.getElementById('btn-drawer-export-md');
+  const drawerNotesList = document.getElementById('drawer-notes-list');
+
+  async function updateReaderNotes() {
+    if (!annotationManager) return;
+    const docKey = AnnotationManager.getDocKey(window.location.href, docTitle.textContent);
+    const notes = await annotationManager.getAnnotationsForDoc(docKey);
+    if (readerNotesCount) readerNotesCount.textContent = notes.length;
+
+    if (!drawerNotesList) return;
+    if (notes.length === 0) {
+      drawerNotesList.innerHTML = '<div class="empty-drawer-hint" style="color:#94a3b8;font-size:12px;text-align:center;padding-top:30px;">暂无论文批注，划选文字后点击高亮或输入笔记即可创建！</div>';
+      return;
+    }
+
+    const colorLabels = {
+      yellow: '[核心]',
+      green:  '[方法]',
+      blue:   '[结论]',
+      pink:   '[疑问]'
+    };
+
+    drawerNotesList.innerHTML = notes.map((item) => `
+      <div class="drawer-note-item">
+        <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">${colorLabels[item.color] || '[要点]'} ${new Date(item.createdAt).toLocaleDateString()}</div>
+        <div class="drawer-note-text">“${item.text}”</div>
+        ${item.note ? `<div class="drawer-note-comment">批注: ${item.note}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  if (btnReaderNotes && readerNotesDrawer) {
+    btnReaderNotes.addEventListener('click', () => {
+      const isHidden = readerNotesDrawer.style.display === 'none';
+      readerNotesDrawer.style.display = isHidden ? 'flex' : 'none';
+      if (isHidden) updateReaderNotes();
+    });
+  }
+
+  if (btnCloseNotesDrawer && readerNotesDrawer) {
+    btnCloseNotesDrawer.addEventListener('click', () => {
+      readerNotesDrawer.style.display = 'none';
+    });
+  }
+
+  if (btnDrawerExportMd) {
+    btnDrawerExportMd.addEventListener('click', async () => {
+      if (!annotationManager) return;
+      const docKey = AnnotationManager.getDocKey(window.location.href, docTitle.textContent);
+      const notes = await annotationManager.getAnnotationsForDoc(docKey);
+      const terms = glossaryExtractor ? glossaryExtractor.getAllTerms() : [];
+      if (notes.length === 0 && terms.length === 0) return alert('本篇论文暂无可导出的批注或专有术语');
+      const md = AnnotationManager.exportToMarkdown(notes, docTitle.textContent || 'PDF 论文笔记', {
+        url: window.location.href,
+        glossary: terms
+      });
+      const blob = new Blob([md], { type: 'text/markdown;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${docTitle.textContent || 'paper'}_notes.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+
+  // Reader Glossary Elements
+  const glossaryExtractor = typeof GlossaryExtractor !== 'undefined' ? new GlossaryExtractor() : null;
+  const btnReaderGlossary = document.getElementById('btn-reader-glossary');
+  const readerGlossaryCount = document.getElementById('reader-glossary-count');
+  const readerGlossaryDrawer = document.getElementById('reader-glossary-drawer');
+  const btnCloseGlossaryDrawer = document.getElementById('btn-close-glossary-drawer');
+  const drawerGlossaryList = document.getElementById('drawer-glossary-list');
+
+  function updateReaderGlossary() {
+    if (!glossaryExtractor) return;
+    const terms = glossaryExtractor.getAllTerms();
+    if (readerGlossaryCount) readerGlossaryCount.textContent = terms.length;
+
+    if (!drawerGlossaryList) return;
+    if (terms.length === 0) {
+      drawerGlossaryList.innerHTML = '<div class="empty-drawer-hint" style="color:#94a3b8;font-size:12px;text-align:center;padding-top:30px;">暂未在本篇论文中检测到显式定义的专有缩写与术语</div>';
+      return;
+    }
+
+    drawerGlossaryList.innerHTML = terms.map((item) => `
+      <div class="drawer-note-item" style="border-left:3px solid #f59e0b;">
+        <div style="font-size:13px;font-weight:700;color:#fbbf24;margin-bottom:2px;">${item.term}</div>
+        <div style="font-size:12.5px;color:#f8fafc;margin-bottom:4px;">${item.definition}</div>
+        <div style="font-size:11px;color:#94a3b8;background:#1e293b;padding:4px 6px;border-radius:4px;line-height:1.4;">
+          “${item.sentence}”
+        </div>
+      </div>
+    `).join('');
+  }
+
+  if (btnReaderGlossary && readerGlossaryDrawer) {
+    btnReaderGlossary.addEventListener('click', () => {
+      const isHidden = readerGlossaryDrawer.style.display === 'none';
+      if (readerNotesDrawer) readerNotesDrawer.style.display = 'none';
+      readerGlossaryDrawer.style.display = isHidden ? 'flex' : 'none';
+      if (isHidden) updateReaderGlossary();
+    });
+  }
+
+  if (btnCloseGlossaryDrawer && readerGlossaryDrawer) {
+    btnCloseGlossaryDrawer.addEventListener('click', () => {
+      readerGlossaryDrawer.style.display = 'none';
+    });
+  }
 
   let currentPdfDoc = null;
   let currentScale = 1.35;
@@ -333,6 +451,21 @@
 
     // Render text layer
     const textContent = await page.getTextContent();
+    if (textContent && textContent.items) {
+      const pageText = textContent.items.map(i => i.str).join(' ');
+      if (glossaryExtractor) {
+        glossaryExtractor.extractFromText(pageText);
+        if (dictService) {
+          dictService.setPaperGlossary(glossaryExtractor);
+        }
+        if (readerGlossaryCount) {
+          readerGlossaryCount.textContent = glossaryExtractor.getAllTerms().length;
+        }
+      }
+      if (citationParser) {
+        citationParser.extractFromText(pageText);
+      }
+    }
     pdfjsLib.renderTextLayer({
       textContentSource: textContent,
       container: textLayerDiv,
@@ -535,10 +668,12 @@
         tokenMap = pRes.tokenMap;
       }
 
+      const reqId = `reader_p${pageNumber}_${i}_${Date.now()}`;
       try {
         const res = await chrome.runtime.sendMessage({
           type: 'TRANSLATE_ONLINE',
-          text: textToTranslate
+          text: textToTranslate,
+          requestId: reqId
         });
 
         if (res && res.success && res.translation) {
@@ -592,6 +727,9 @@
       } else {
         readerBilingualStatus.textContent = '原版英文排版';
         readerBilingualStatus.style.color = '#94a3b8';
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({ type: 'CANCEL_ALL_TRANSLATIONS', prefix: 'reader_' }).catch(() => {});
+        }
       }
     }
 
