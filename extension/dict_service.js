@@ -108,10 +108,37 @@
   class DictService {
     constructor(dictData = null) {
       this.dict = dictData || (typeof ACADEMIC_DICT !== 'undefined' ? ACADEMIC_DICT : {});
+      this.paperGlossary = new Map();
     }
 
     setDict(dictData) {
       this.dict = dictData;
+    }
+
+    setPaperGlossary(glossary) {
+      this.paperGlossary = new Map();
+      if (!glossary) return;
+      if (glossary instanceof Map) {
+        this.paperGlossary = new Map(glossary);
+      } else if (Array.isArray(glossary)) {
+        for (const item of glossary) {
+          if (item && item.term) {
+            this.paperGlossary.set(item.term.trim().toUpperCase(), item);
+          }
+        }
+      } else if (typeof glossary.lookup === 'function' && typeof glossary.getAllTerms === 'function') {
+        for (const item of glossary.getAllTerms()) {
+          if (item && item.term) {
+            this.paperGlossary.set(item.term.trim().toUpperCase(), item);
+          }
+        }
+      }
+    }
+
+    lookupPaperGlossary(term) {
+      if (!term || !this.paperGlossary) return null;
+      const key = term.trim().toUpperCase();
+      return this.paperGlossary.get(key) || null;
     }
 
     /**
@@ -201,6 +228,21 @@
       if (!word || !this.dict) return null;
       const raw = word.trim();
       const lower = raw.toLowerCase();
+
+      // 0. High-priority Paper-specific Glossary lookup
+      const glossaryMatch = this.lookupPaperGlossary(raw);
+      if (glossaryMatch) {
+        return {
+          found: true,
+          isPaperGlossary: true,
+          query: raw,
+          baseWord: glossaryMatch.term,
+          phonetic: '论文专属术语',
+          translation: `【本篇定义】: ${glossaryMatch.definition}\n【出处例句】: ${glossaryMatch.sentence}`,
+          glossaryEntry: glossaryMatch,
+          isInflected: false
+        };
+      }
 
       // 1. Exact match
       if (this.dict[lower]) {

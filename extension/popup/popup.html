@@ -21,10 +21,11 @@
 
     <!-- Top Navigation Tabs -->
     <nav class="popup-nav-tabs">
-      <button class="nav-tab active" data-tab="tab-search-settings">查词与设置</button>
+      <button class="nav-tab active" data-tab="tab-search-settings">查词设置</button>
       <button class="nav-tab" data-tab="tab-wordbook">生词本 <span class="tab-badge" id="nav-wordbook-count">0</span></button>
+      <button class="nav-tab" data-tab="tab-notes">论文笔记 <span class="tab-badge" id="nav-notes-count">0</span></button>
       <button class="nav-tab" data-tab="tab-history">查词历史</button>
-      <button class="nav-tab" data-tab="tab-api">自定义 API</button>
+      <button class="nav-tab" data-tab="tab-api">翻译引擎</button>
     </nav>
 
     <!-- Tab 1: Search & Settings -->
@@ -32,7 +33,7 @@
       <!-- PDF Detection Banner -->
       <div id="pdf-detect-banner" class="pdf-detect-banner" style="display: none;">
         <div class="banner-content">
-          <div class="banner-title">📄 当前标签页为 PDF 论文</div>
+          <div class="banner-title">当前标签页为 PDF 论文</div>
           <div class="banner-desc">Chrome 自带内核拦截了直接划词，点击一键转入阅读器畅享秒查：</div>
         </div>
         <button id="btn-convert-current-pdf" class="btn-convert-pdf">
@@ -209,6 +210,7 @@
         <div class="wordbook-toolbar">
           <span class="wordbook-count-text">已收藏 <strong id="wordbook-total">0</strong> 词</span>
           <div class="wordbook-actions">
+            <button id="btn-export-wordbook-md" class="btn-tool-sm primary" title="导出为 Markdown 词汇表（完美兼容 Obsidian / Notion）">导出 MD</button>
             <button id="btn-export-anki" class="btn-tool-sm" title="导出为 Anki 兼容卡片文本">导出 Anki</button>
             <button id="btn-export-csv" class="btn-tool-sm" title="导出为 CSV 表格">导出 CSV</button>
             <button id="btn-clear-wordbook" class="btn-tool-sm danger" title="清空生词本">清空</button>
@@ -216,7 +218,7 @@
         </div>
 
         <div id="wordbook-list" class="wordbook-list-container">
-          <div class="empty-hint">生词本空空如也，查词时点击卡片右上角 ⭐ 即可收藏！</div>
+          <div class="empty-hint">生词本空空如也，查词时点击卡片右上角收藏按钮即可保存！</div>
         </div>
       </section>
     </main>
@@ -226,7 +228,7 @@
       <section class="history-section">
         <div class="history-toolbar">
           <span class="history-count-text">最近查词记录</span>
-          <button id="btn-clear-history" class="btn-tool-sm danger">清空记录</button>
+          <button id="btn-clear-history" class="btn-tool-sm danger" title="清空全部查词历史">清空</button>
         </div>
         <div id="history-list" class="history-list-container">
           <div class="empty-hint">暂无查词历史记录</div>
@@ -270,6 +272,24 @@
       </section>
     </main>
 
+    <!-- Tab 5: Notes & Highlights (论文笔记) -->
+    <main id="tab-notes" class="tab-pane" style="display: none;">
+      <section class="wordbook-section">
+        <div class="wordbook-toolbar">
+          <span class="wordbook-count-text">已记录 <strong id="notes-total">0</strong> 条批注</span>
+          <div class="wordbook-actions">
+            <button id="btn-export-notes-md" class="btn-tool-sm primary" title="导出为 Markdown 格式（完美兼容 Obsidian / Notion）">导出 MD</button>
+            <button id="btn-export-notes-json" class="btn-tool-sm" title="导出为 JSON">导出 JSON</button>
+            <button id="btn-clear-notes" class="btn-tool-sm danger" title="清空全部批注">清空</button>
+          </div>
+        </div>
+
+        <div id="notes-list" class="wordbook-list-container">
+          <div class="empty-hint">暂无论文批注与高亮，划选学术内容后点击颜色即可高亮，点击“笔记”即可创建！</div>
+        </div>
+      </section>
+    </main>
+
     <!-- Tips / Help Notice -->
     <footer class="popup-footer">
       <div class="tip-card">
@@ -283,6 +303,7 @@
 
   <script src="../dict/academic_dict.js"></script>
   <script src="../dict_service.js"></script>
+  <script src="../annotation_manager.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

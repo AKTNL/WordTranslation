@@ -456,7 +456,7 @@
           /* Expanded Main Panel */
           .capsule-panel {
             display: none;
-            width: 270px;
+            width: 290px;
             background: #ffffff;
             border-radius: 14px;
             border: 1px solid #e2e8f0;
@@ -510,7 +510,7 @@
           .mode-btn {
             flex: 1;
             padding: 7px 4px;
-            font-size: 12.5px;
+            font-size: 12px;
             font-weight: 600;
             border: none;
             background: transparent;
@@ -519,6 +519,8 @@
             cursor: pointer;
             transition: all 0.18s ease;
             text-align: center;
+            white-space: nowrap;
+            flex-shrink: 0;
           }
           .mode-btn:hover { color: #1e293b; }
           .mode-btn.active {
@@ -552,41 +554,58 @@
 
           /* Footer / Shortcut Info */
           .panel-footer {
-            padding: 8px 14px;
+            padding: 8px 12px;
             background: #f8fafc;
             border-top: 1px solid #f1f5f9;
-            font-size: 11.5px;
+            font-size: 11px;
             color: #94a3b8;
             display: flex;
-            align-items: center;
-            justify-content: space-between;
+            flex-direction: column;
+            gap: 6px;
           }
           .footer-actions {
             display: flex;
             align-items: center;
-            gap: 4px;
+            justify-content: space-between;
+            gap: 5px;
+            width: 100%;
           }
           .btn-footer-action {
-            background: transparent;
+            background: #ffffff;
             border: 1px solid #cbd5e1;
             border-radius: 4px;
-            color: #64748b;
+            color: #475569;
             font-size: 11px;
-            padding: 2px 6px;
+            padding: 4px 6px;
             cursor: pointer;
             transition: all 0.15s ease;
+            white-space: nowrap;
+            flex: 1;
+            text-align: center;
+            flex-shrink: 0;
+            outline: none;
           }
           .btn-footer-action:hover {
             background: #e2e8f0;
             color: #0f172a;
           }
+          .footer-subrow {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 6px;
+            width: 100%;
+            font-size: 10.5px;
+            color: #94a3b8;
+          }
           .shortcut-badge {
             background: #e2e8f0;
             color: #475569;
-            padding: 2px 6px;
-            border-radius: 4px;
+            padding: 1px 5px;
+            border-radius: 3px;
             font-family: monospace;
             font-weight: 600;
+            font-size: 10.5px;
           }
 
           @keyframes panelFadeIn {
@@ -635,10 +654,14 @@
 
           <div class="panel-footer">
             <div class="footer-actions">
+              <button class="btn-footer-action" id="btn-capsule-notes" title="一键导出当前论文的全部批注笔记为 Markdown (.md)">导出笔记</button>
+              <button class="btn-footer-action" id="btn-disable-site" title="在当前网站禁用插件">本站禁用</button>
               <button class="btn-footer-action" id="btn-hide-capsule" title="彻底隐藏右侧悬浮胶囊">隐藏胶囊</button>
-              <button class="btn-footer-action" id="btn-disable-site" title="在当前网站禁用插件">在此站禁用</button>
             </div>
-            <span class="shortcut-badge">Alt + B</span>
+            <div class="footer-subrow">
+              <span>快捷切换</span>
+              <span class="shortcut-badge">Alt + B</span>
+            </div>
           </div>
         </div>
       `;
@@ -649,6 +672,42 @@
       const btnMin = this.shadow.getElementById('btn-minimize');
       const btnHide = this.shadow.getElementById('btn-hide-capsule');
       const btnDisableSite = this.shadow.getElementById('btn-disable-site');
+      const btnNotes = this.shadow.getElementById('btn-capsule-notes');
+
+      if (btnNotes) {
+        btnNotes.addEventListener('click', async () => {
+          const mgr = typeof AnnotationManager !== 'undefined' ? new AnnotationManager() : null;
+          if (!mgr) return;
+          const docKey = AnnotationManager.getDocKey(window.location.href, document.title);
+          const notes = await mgr.getAnnotationsForDoc(docKey);
+
+          let terms = [];
+          const extractor = typeof GlossaryExtractor !== 'undefined' ? new GlossaryExtractor() : null;
+          if (extractor && typeof document !== 'undefined' && document.body) {
+            try {
+              terms = extractor.extractFromDOM(document.body) || [];
+            } catch (e) {}
+          }
+
+          if ((!notes || notes.length === 0) && (!terms || terms.length === 0)) {
+            alert('当前页面暂无论文批注笔记或专有术语，划词高亮或写笔记后即可一键导出！');
+            return;
+          }
+
+          const md = AnnotationManager.exportToMarkdown(notes, document.title || '论文阅读笔记', {
+            url: window.location.href,
+            glossary: terms
+          });
+          const blob = new Blob([md], { type: 'text/markdown;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          const cleanTitle = (document.title || 'paper').replace(/[/\\?%*:|"<>]/g, '_').slice(0, 30);
+          a.download = `${cleanTitle}_reading_notes.md`;
+          a.click();
+          URL.revokeObjectURL(url);
+        });
+      }
 
       pill.addEventListener('click', () => {
         this.isExpanded = true;
@@ -740,7 +799,9 @@
 
     bindDrag() {
       if (!this.host) return;
+      let startX = 0;
       let startY = 0;
+      let initialLeft = 0;
       let initialTop = 0;
       let isDragging = false;
 
@@ -750,15 +811,21 @@
         if (!pill || !e.composedPath().includes(pill)) return;
 
         isDragging = false;
+        startX = e.clientX;
         startY = e.clientY;
         const rect = this.host.getBoundingClientRect();
+        initialLeft = rect.left;
         initialTop = rect.top;
 
         const onMouseMove = (moveEvent) => {
+          const dx = moveEvent.clientX - startX;
           const dy = moveEvent.clientY - startY;
-          if (Math.abs(dy) > 3) isDragging = true;
-          const newTop = Math.max(20, Math.min(window.innerHeight - 80, initialTop + dy));
+          if (Math.abs(dx) > 3 || Math.abs(dy) > 3) isDragging = true;
+          const newLeft = Math.max(10, Math.min(window.innerWidth - 130, initialLeft + dx));
+          const newTop = Math.max(10, Math.min(window.innerHeight - 60, initialTop + dy));
+          this.host.style.left = `${newLeft}px`;
           this.host.style.top = `${newTop}px`;
+          this.host.style.right = 'auto';
           this.host.style.transform = 'none';
         };
 
@@ -793,6 +860,8 @@
       this.queue = [];
       this.activeRequests = 0;
       this.maxConcurrency = 2;
+      this.activeRequestIds = new Set();
+      this.reqCounter = 0;
       this.toastTimer = null;
     }
 
@@ -959,9 +1028,9 @@
 
       // Show toast
       const toastTexts = {
-        original: '↩️ 已还原英文原版排版',
-        bilingual: '📖 已开启学术双语对照阅读',
-        chinese: '⚡ 已开启纯中文极速阅读模式'
+        original: '已还原英文原版排版',
+        bilingual: '已开启学术双语对照阅读',
+        chinese: '已开启纯中文极速阅读模式'
       };
       this.showToast(toastTexts[newMode]);
 
@@ -1003,8 +1072,9 @@
         this.observer.disconnect();
       }
 
-      // 2. Clear translation queue
+      // 2. Clear translation queue & cancel active in-flight requests
       this.queue = [];
+      this.cancelActiveRequests();
 
       // 3. Reset uncompleted queued items to idle and clean temporary loading shimmer
       for (const el of this.elements) {
@@ -1158,13 +1228,28 @@
       }
     }
 
+    cancelActiveRequests() {
+      if (this.activeRequestIds && this.activeRequestIds.size > 0) {
+        for (const reqId of this.activeRequestIds) {
+          if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+            chrome.runtime.sendMessage({ type: 'CANCEL_TRANSLATION', requestId: reqId }).catch(() => {});
+          }
+        }
+        this.activeRequestIds.clear();
+      }
+    }
+
     requestTranslation(text) {
+      const requestId = `bilingual_${Date.now()}_${++this.reqCounter}`;
+      this.activeRequestIds.add(requestId);
       return new Promise((resolve) => {
         if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
           chrome.runtime.sendMessage({
             type: 'TRANSLATE_ONLINE',
-            text
+            text,
+            requestId
           }, (res) => {
+            this.activeRequestIds.delete(requestId);
             if (chrome.runtime.lastError) {
               resolve({ success: false, error: chrome.runtime.lastError.message });
             } else {
@@ -1172,6 +1257,7 @@
             }
           });
         } else {
+          this.activeRequestIds.delete(requestId);
           resolve({ success: false, error: '扩展运行环境不可用' });
         }
       });
