@@ -3,7 +3,7 @@
   "name": "translation-maintenance",
   "title": "修复翻译触发、离线引擎、悬浮胶囊与术语能力",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "extension",
   "package": null,
