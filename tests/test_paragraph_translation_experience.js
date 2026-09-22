@@ -208,13 +208,26 @@ function createAcademicElement(tagName, text, options = {}) {
     offsetHeight: options.hidden ? 0 : 40,
     offsetWidth: options.hidden ? 0 : 400,
     get innerText() {
+      const style = this._computedStyle || {};
+      if (
+        this.hidden ||
+        String(style.display || '').toLowerCase() === 'none' ||
+        ['hidden', 'collapse'].includes(String(style.visibility || '').toLowerCase())
+      ) {
+        return '';
+      }
       return [this._ownText, ...this.children.map((child) => child.innerText)]
         .filter(Boolean)
         .join(' ')
         .trim();
     },
     set innerText(value) { this._ownText = String(value || ''); },
-    get textContent() { return this.innerText; },
+    get textContent() {
+      return [this._ownText, ...this.children.map((child) => child.textContent)]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+    },
     set textContent(value) { this._ownText = String(value || ''); },
     getAttribute(name) {
       if (name === 'class') return this.className || null;
@@ -713,6 +726,97 @@ test('hidden or excluded div descendants do not suppress visible semantic parent
   assert.equal(filter.isEligible(parentWithHiddenChild), true);
   assert.equal(filter.isEligible(excludedChild), false);
   assert.equal(filter.isEligible(parentWithExcludedChild), true);
+}));
+
+test('content discovery ignores hidden control descendants', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const article = createAcademicElement('ARTICLE', '');
+  const expected = [];
+  const hiddenCases = [
+    { hidden: true },
+    { attributes: { 'aria-hidden': 'true' } },
+    { computedStyle: { display: 'none', visibility: 'visible' } },
+    { computedStyle: { display: 'block', visibility: 'hidden' } }
+  ];
+  for (const [index, options] of hiddenCases.entries()) {
+    const paragraph = article.appendChild(createAcademicElement(
+      'DIV',
+      `This visible semantic paragraph ${index} remains valid when its optional control is hidden.`,
+      { role: 'paragraph' }
+    ));
+    paragraph.appendChild(createAcademicElement('BUTTON', 'Show details', options));
+    expected.push(paragraph);
+  }
+  const root = {
+    body: article,
+    querySelector(selector) { return selector === 'article' ? article : null; }
+  };
+
+  assert.deepEqual(filter.findContentElements(root), expected);
+}));
+
+test('content discovery ignores controls inside excluded descendant wrappers', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const article = createAcademicElement('ARTICLE', '');
+  const paragraph = article.appendChild(createAcademicElement(
+    'DIV',
+    'This visible semantic paragraph remains valid beside excluded reference controls.',
+    { role: 'paragraph' }
+  ));
+  const references = paragraph.appendChild(createAcademicElement('SECTION', '', { className: 'references' }));
+  references.appendChild(createAcademicElement('BUTTON', 'Open citation'));
+  const root = {
+    body: article,
+    querySelector(selector) { return selector === 'article' ? article : null; }
+  };
+
+  assert.deepEqual(filter.findContentElements(root), [paragraph]);
+}));
+
+test('content discovery excludes hidden links from link-density statistics', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const article = createAcademicElement('ARTICLE', '');
+  const paragraph = article.appendChild(createAcademicElement(
+    'DIV',
+    'This visible semantic paragraph presents the complete academic result.',
+    { role: 'paragraph' }
+  ));
+  for (const label of ['Dataset archive', 'Model source', 'Evaluation report', 'Related research']) {
+    paragraph.appendChild(createAcademicElement('A', label, { hidden: true }));
+  }
+  const root = {
+    body: article,
+    querySelector(selector) { return selector === 'article' ? article : null; }
+  };
+
+  assert.equal(paragraph.innerText.includes('Dataset archive'), false);
+  assert.equal(paragraph.textContent.includes('Dataset archive'), true);
+  assert.deepEqual(filter.findContentElements(root), [paragraph]);
+}));
+
+test('content discovery still filters visible control and link descendants', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const article = createAcademicElement('ARTICLE', '');
+  const interactive = article.appendChild(createAcademicElement(
+    'DIV',
+    'This semantic paragraph contains a visible control and must remain excluded.',
+    { role: 'paragraph' }
+  ));
+  interactive.appendChild(createAcademicElement('BUTTON', 'Show details'));
+  const linkDense = article.appendChild(createAcademicElement(
+    'DIV',
+    'Browse these related research resources.',
+    { role: 'paragraph' }
+  ));
+  for (const label of ['Dataset', 'Model', 'Source', 'Evaluation']) {
+    linkDense.appendChild(createAcademicElement('A', label));
+  }
+  const root = {
+    body: article,
+    querySelector(selector) { return selector === 'article' ? article : null; }
+  };
+
+  assert.deepEqual(filter.findContentElements(root), []);
 }));
 
 test('content discovery uses a bounded number of subtree queries', () => withAcademicDom(() => {

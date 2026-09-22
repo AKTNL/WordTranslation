@@ -449,6 +449,7 @@
       const selfExcluded = new WeakMap();
       const cssHidden = new WeakMap();
       const inheritedExcluded = new WeakMap();
+      const helperSuppressed = new WeakMap();
 
       const isSelfExcluded = (el) => {
         if (!selfExcluded.has(el)) {
@@ -482,15 +483,30 @@
         for (const node of path) inheritedExcluded.set(node, excluded);
         return excluded;
       };
+      const isHelperSuppressed = (el) => {
+        if (!el || !el.tagName) return true;
+        if (!helperSuppressed.has(el)) {
+          const ariaHidden = el.getAttribute &&
+            String(el.getAttribute('aria-hidden') || '').toLowerCase() === 'true';
+          const suppressed = el.hidden === true || ariaHidden || isCssHidden(el) ||
+            Boolean(el.parentElement && isExcluded(el.parentElement));
+          helperSuppressed.set(el, suppressed);
+        }
+        return helperSuppressed.get(el);
+      };
 
       const descendants = container.querySelectorAll(DESCENDANT_SCAN_SELECTOR);
       for (const descendant of descendants) {
         const blocksDiv = this.isBlockingDescendantNode(descendant);
         const isLink = isLinkElement(descendant);
-        if (!blocksDiv && !isLink) continue;
+        if ((!blocksDiv && !isLink) || isHelperSuppressed(descendant)) continue;
 
         const linkTextLength = isLink
-          ? (descendant.innerText || descendant.textContent || '').replace(/\s+/g, ' ').trim().length
+          ? String(
+            typeof descendant.innerText === 'string'
+              ? descendant.innerText
+              : descendant.textContent || ''
+          ).replace(/\s+/g, ' ').trim().length
           : 0;
         let ancestor = descendant.parentElement;
         while (ancestor && ancestor !== container.parentElement) {
