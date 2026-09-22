@@ -384,8 +384,11 @@ test('academic filtering parametrically rejects excluded structural ancestors', 
 test('academic filtering rejects interactive and landmark ARIA roles on self or ancestors', () => withAcademicDom(() => {
   const filter = new AcademicFilter();
   const roles = [
-    'button', 'navigation', 'menu', 'menuitem', 'toolbar', 'tab', 'tablist',
-    'dialog', 'search', 'form', 'banner', 'contentinfo', 'complementary'
+    'button', 'link', 'checkbox', 'radio', 'switch', 'textbox', 'combobox',
+    'listbox', 'option', 'slider', 'spinbutton', 'progressbar', 'scrollbar',
+    'tree', 'treeitem', 'grid', 'gridcell', 'row', 'rowgroup', 'application',
+    'navigation', 'menu', 'menuitem', 'toolbar', 'tab', 'tablist', 'dialog',
+    'search', 'form', 'banner', 'contentinfo', 'complementary'
   ];
 
   for (const role of roles) {
@@ -406,6 +409,32 @@ test('academic filtering rejects interactive and landmark ARIA roles on self or 
     assert.equal(filter.isCandidateTag(nestedCandidate), true, `ancestor role=${role}`);
     assert.equal(filter.isEligible(nestedCandidate), false, `ancestor role=${role}`);
   }
+}));
+
+test('semantic divs reject descendant custom ARIA controls', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const paragraph = createAcademicElement(
+    'DIV',
+    'This semantic paragraph includes a custom setting control and must not be translated.',
+    { role: 'paragraph' }
+  );
+  paragraph.appendChild(createAcademicElement('SPAN', 'Enable results', { role: 'switch' }));
+
+  assert.equal(filter.isSemanticParagraphDiv(paragraph), false);
+  assert.equal(filter.isEligible(paragraph), false);
+}));
+
+test('academic filtering preserves harmless document and content roles', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const documentRegion = createAcademicElement('SECTION', '', { role: 'document' });
+  const paragraph = documentRegion.appendChild(createAcademicElement(
+    'DIV',
+    'This article role contains ordinary English academic prose without interactive controls.',
+    { role: 'article' }
+  ));
+
+  assert.equal(filter.isCandidateTag(paragraph), true);
+  assert.equal(filter.isEligible(paragraph), true);
 }));
 
 test('academic filtering rejects link-only and link-dense div collections', () => withAcademicDom(() => {

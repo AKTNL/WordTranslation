@@ -203,8 +203,11 @@
       this.mathClassIdRegex = /(?:^|[\s_-])(?:formula|math|mathjax|katex|mjx-container)(?:$|[\s_-])/i;
       this.semanticDivHintRegex = /(?:^|[\s_-])(?:paragraph|para|prose|abstract|article[-_]?text|body[-_]?text)(?:$|[\s_-])/i;
       this.excludedRoles = new Set([
-        'button', 'navigation', 'menu', 'menuitem', 'toolbar', 'tab', 'tablist',
-        'dialog', 'search', 'form', 'banner', 'contentinfo', 'complementary'
+        'button', 'link', 'checkbox', 'radio', 'switch', 'textbox', 'combobox',
+        'listbox', 'option', 'slider', 'spinbutton', 'progressbar', 'scrollbar',
+        'tree', 'treeitem', 'grid', 'gridcell', 'row', 'rowgroup', 'application',
+        'navigation', 'menu', 'menuitem', 'toolbar', 'tab', 'tablist', 'dialog',
+        'search', 'form', 'banner', 'contentinfo', 'complementary'
       ]);
       this.blockCandidateTags = new Set([
         'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'LI'
@@ -333,13 +336,20 @@
 
     hasInteractiveDescendant(el) {
       if (!el || typeof el.querySelector !== 'function') return false;
-      return Boolean(el.querySelector([
+      if (el.querySelector([
         'button', 'input', 'textarea', 'select', 'form', 'option', 'label',
         'audio', 'video', 'iframe', '[contenteditable]:not([contenteditable="false"])',
         'pre', 'code', 'math', 'script', 'style', 'noscript',
         '.pd-bilingual-trans', '.pd-bilingual-loading', '.pd-mode-toast',
         'paper-dict-host', 'paperdict-bilingual-capsule-host'
-      ].join(', ')));
+      ].join(', '))) {
+        return true;
+      }
+
+      if (typeof el.querySelectorAll !== 'function') return false;
+      return Array.from(el.querySelectorAll('[role]')).some((descendant) => {
+        return this.hasExcludedRole(descendant);
+      });
     }
 
     hasNestedCandidateBlock(el) {
