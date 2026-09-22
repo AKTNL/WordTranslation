@@ -382,6 +382,25 @@ function createContentHarness() {
     setCollapsedSelection() {
       selection = { rangeCount: 0, isCollapsed: true, toString: () => '' };
     },
+    setCardSelection() {
+      const host = document.body.children.find((node) => node.id === 'paper-dict-host-root');
+      const root = host.shadowRoot;
+      const cardNode = { isConnected: true, getRootNode: () => root };
+      const range = {
+        startContainer: cardNode,
+        endContainer: cardNode,
+        startOffset: 0,
+        endOffset: 4
+      };
+      selection = {
+        rangeCount: 1,
+        isCollapsed: false,
+        anchorNode: cardNode,
+        focusNode: cardNode,
+        getRangeAt: () => range,
+        toString: () => 'text'
+      };
+    },
     disconnectSelection() {
       if (selectedNode) selectedNode.isConnected = false;
     },
@@ -600,6 +619,46 @@ test('closed and replaced lookups stop before online translation while the curre
   assert(card.classList.contains('visible'));
   assert.match(card.innerHTML, /current context/);
   assert.match(card.innerHTML, /current translation/);
+});
+
+test('selecting card text preserves the anchor request while external collapse still closes it', async () => {
+  const harness = createContentHarness();
+  harness.setDomSelection('anchored phrase', {
+    left: 100, top: 100, right: 220, bottom: 120, width: 120, height: 20
+  });
+  harness.document.dispatch('mouseup', { composedPath: () => [] });
+  harness.flushTimers();
+  await resolveRequest(harness, 0, { success: true, found: false });
+
+  const card = harness.getCard();
+  assert(card.classList.contains('visible'));
+  assert.equal(harness.requests[1].message.type, 'TRANSLATE_ONLINE');
+
+  harness.setCardSelection();
+  harness.document.dispatch('selectionchange');
+  assert(card.classList.contains('visible'));
+  assert.equal(harness.getDetachCalls(), 0);
+
+  await resolveRequest(harness, 1, {
+    success: true,
+    translation: 'completed after card selection',
+    source: 'test online'
+  });
+  assert.match(card.innerHTML, /completed after card selection/);
+
+  harness.document.dispatch('mousedown', { composedPath: () => [card] });
+  harness.setCollapsedSelection();
+  harness.document.dispatch('selectionchange');
+  assert(card.classList.contains('visible'));
+  harness.document.dispatch('mouseup', { composedPath: () => [card] });
+  harness.flushTimers();
+  assert(card.classList.contains('visible'));
+
+  harness.getShadowRoot().querySelector('#btn-pin').onclick({ stopPropagation() {} });
+  harness.setCollapsedSelection();
+  harness.document.dispatch('selectionchange');
+  assert.equal(card.classList.contains('visible'), false);
+  assert.equal(harness.getDetachCalls(), 1);
 });
 
 test('content script owns and clears one active DOM selection anchor', () => {

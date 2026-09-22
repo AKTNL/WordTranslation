@@ -83,6 +83,7 @@
   let activeSelectionAnchor = null;
   let selectionPositionFrame = null;
   let lookupGeneration = 0;
+  let isCardInteractionActive = false;
 
   // Create isolated Shadow DOM
   function setupShadowDOM() {
@@ -518,6 +519,60 @@
     if (activeSelectionAnchor) {
       activeSelectionAnchor.dispose();
       activeSelectionAnchor = null;
+    }
+  }
+
+  function isNodeInsideSelectionCard(node) {
+    if (!node || !cardEl) return false;
+    if (node === cardEl || node === shadowRoot || node === hostEl) return true;
+    if (typeof node.getRootNode === 'function' && node.getRootNode() === shadowRoot) return true;
+    return typeof cardEl.contains === 'function' && cardEl.contains(node);
+  }
+
+  function areSelectionEndpointsInsideCard(selection) {
+    if (!selection) return false;
+    const endpoints = [selection.anchorNode, selection.focusNode].filter(Boolean);
+    return endpoints.length > 0 && endpoints.every(isNodeInsideSelectionCard);
+  }
+
+  function isSelectionInsideCard(selection) {
+    if (isCardInteractionActive) return true;
+    if (areSelectionEndpointsInsideCard(selection)) return true;
+
+    if (shadowRoot && typeof shadowRoot.getSelection === 'function') {
+      try {
+        const shadowSelection = shadowRoot.getSelection();
+        if (shadowSelection && shadowSelection.rangeCount > 0
+            && areSelectionEndpointsInsideCard(shadowSelection)) {
+          return true;
+        }
+      } catch (error) {
+        // Fall through to composed-range detection.
+      }
+    }
+
+    if (selection && shadowRoot && typeof selection.getComposedRanges === 'function') {
+      try {
+        const ranges = selection.getComposedRanges({ shadowRoots: [shadowRoot] });
+        if (ranges.some((range) => isNodeInsideSelectionCard(range.startContainer)
+            && isNodeInsideSelectionCard(range.endContainer))) {
+          return true;
+        }
+      } catch (error) {
+        // Older browsers may expose getComposedRanges with a different signature.
+      }
+    }
+
+    return false;
+  }
+
+  function validateActiveDocumentSelection() {
+    if (!activeSelectionAnchor) return;
+    const selection = window.getSelection();
+    if (isSelectionInsideCard(selection)) return;
+    if (!activeSelectionAnchor.matchesSelection(selection)) {
+      hideTriggerIcon();
+      hideCard(true);
     }
   }
 
@@ -1098,8 +1153,12 @@
   // Single Mouse Up Listener (No duplicate listener)
   function onMouseUp(e) {
     if (e.composedPath && e.composedPath().some(el => el === cardEl || el === hostEl || el === triggerIconEl)) {
+      setTimeout(() => {
+        isCardInteractionActive = false;
+      }, 0);
       return;
     }
+    isCardInteractionActive = false;
     triggerSelectionCheck(e);
   }
 
@@ -1113,12 +1172,7 @@
   }, false);
 
   document.addEventListener('selectionchange', () => {
-    if (!activeSelectionAnchor) return;
-    const selection = window.getSelection();
-    if (!activeSelectionAnchor.matchesSelection(selection)) {
-      hideTriggerIcon();
-      hideCard(true);
-    }
+    validateActiveDocumentSelection();
   }, false);
 
   window.addEventListener('scroll', scheduleSelectionCardPosition, { capture: true, passive: true });
@@ -1127,8 +1181,10 @@
   // Click outside to dismiss
   document.addEventListener('mousedown', (e) => {
     if (e.composedPath && e.composedPath().some(el => el === cardEl || el === hostEl || el === triggerIconEl)) {
+      isCardInteractionActive = true;
       return;
     }
+    isCardInteractionActive = false;
     hideTriggerIcon();
     if (!isPinned && cardEl && cardEl.classList.contains('visible')) {
       const selection = window.getSelection();
