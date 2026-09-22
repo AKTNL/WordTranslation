@@ -1216,6 +1216,242 @@ test('in-flight aggregate replacement shares its request and renders only the ch
   });
 });
 
+test('saturated aggregate replacement retains the shared request until the child consumes it', () => {
+  const mutation = createObserverDouble();
+  return withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, async ({ body }) => {
+    const aggregateText = 'This saturated aggregate includes temporary wrapper text around the requested payload.';
+    const childText = 'This specific child contains the stable academic payload requested from translation.';
+    const sharedPayload = 'stable protected translation payload';
+    const blockerText = 'This independent paragraph occupies the second translation request slot.';
+    const aggregate = body.appendChild(makeSchedulingElement(20, 80, 10, 210, {
+      tagName: 'DIV',
+      role: 'paragraph',
+      text: aggregateText
+    }));
+    const blocker = body.appendChild(makeSchedulingElement(100, 160, 10, 210, { text: blockerText }));
+    const sharedRequest = createDeferred();
+    const blockerRequest = createDeferred();
+    const requests = [];
+    const renders = [];
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.formulaProtector = {
+      protect: (element) => ({
+        protectedText: element === blocker ? blockerText : sharedPayload,
+        tokenMap: new Map()
+      }),
+      restore: (translation) => translation,
+      escapeHtml: (value) => value
+    };
+    manager.renderLoadingPlaceholder = (element, info) => {
+      info.transEl = createTranslationNodeDouble();
+    };
+    manager.requestTranslation = (text) => {
+      requests.push(text);
+      return text === sharedPayload ? sharedRequest.promise : blockerRequest.promise;
+    };
+    manager.renderTranslation = (element, info, translation) => {
+      renders.push({ element, translation });
+    };
+    manager.applyDisplayModeToAll = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.observeContentChanges();
+    manager.registerElement(aggregate);
+    manager.registerElement(blocker);
+    assert.equal(manager.activeRequests, manager.maxConcurrency);
+    assert.deepEqual(requests, [sharedPayload, blockerText]);
+
+    aggregate.innerText = '';
+    const child = aggregate.appendChild(makeSchedulingElement(20, 80, 10, 210, { text: childText }));
+    mutation.instances[0].emit([{
+      type: 'childList',
+      target: aggregate,
+      addedNodes: [child],
+      removedNodes: []
+    }]);
+    assert.deepEqual(manager.queue, [child]);
+
+    sharedRequest.resolve({ success: true, translation: 'shared translation' });
+    await flushSchedulingPromises();
+
+    assert.equal(requests.filter((text) => text === sharedPayload).length, 1);
+    assert.deepEqual(
+      renders.filter(({ element }) => element === child),
+      [{ element: child, translation: 'shared translation' }]
+    );
+    assert.equal(manager.elementStateMap.get(child).state, 'done');
+
+    blockerRequest.resolve({ success: true, translation: 'blocker translation' });
+    await flushSchedulingPromises();
+    assert.equal(manager.activeRequests, 0);
+  });
+});
+
+test('original mode invalidates a deferred request and permits a clean re-entry', () => {
+  return withSchedulingDom({}, async ({ body }) => {
+    const paragraph = body.appendChild(makeSchedulingElement());
+    const oldRequest = createDeferred();
+    const newRequest = createDeferred();
+    const deferreds = [oldRequest, newRequest];
+    const requests = [];
+    const renders = [];
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.filter = {
+      findContentElements: () => [paragraph],
+      isEligible: () => true
+    };
+    manager.formulaProtector = {
+      protect: (element) => ({
+        protectedText: (element.innerText || element.textContent || '').trim(),
+        tokenMap: new Map()
+      }),
+      restore: (translation) => translation,
+      escapeHtml: (value) => value
+    };
+    manager.renderLoadingPlaceholder = (element, info) => {
+      info.transEl = createTranslationNodeDouble();
+    };
+    manager.requestTranslation = (text) => {
+      requests.push(text);
+      return deferreds[requests.length - 1].promise;
+    };
+    manager.renderTranslation = (element, info, translation) => {
+      renders.push({ element, translation });
+    };
+    manager.applyDisplayModeToAll = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.registerElement(paragraph);
+    const info = manager.elementStateMap.get(paragraph);
+    const oldLoading = info.transEl;
+    assert.equal(info.state, 'translating');
+
+    manager.mode = 'original';
+    manager.restoreOriginalView();
+    assert.equal(info.state, 'idle');
+    assert.equal(info.requestId, null);
+    assert.equal(info.transEl, null);
+    assert.equal(oldLoading.removed, true);
+
+    oldRequest.resolve({ success: true, translation: 'stale original-mode response' });
+    await flushSchedulingPromises();
+    assert.deepEqual(renders, []);
+    assert.equal(manager.cache.size, 0);
+    assert.equal(manager.activeRequests, 0);
+
+    manager.mode = 'bilingual';
+    manager.activateBilingualView();
+    assert.equal(requests.length, 2);
+    assert.equal(info.state, 'translating');
+
+    newRequest.resolve({ success: true, translation: 'fresh re-entry response' });
+    await flushSchedulingPromises();
+    assert.deepEqual(renders, [{ element: paragraph, translation: 'fresh re-entry response' }]);
+    assert.equal(info.state, 'done');
+    assert.equal(manager.cache.get(paragraph.innerText), 'fresh re-entry response');
+  });
+});
+
+test('configuration generation rejects old responses and retries after the occupied slot releases', () => {
+  return withSchedulingDom({}, async ({ body }) => {
+    const previousChrome = global.chrome;
+    let storageListener = null;
+    global.chrome = {
+      storage: {
+        onChanged: { addListener(listener) { storageListener = listener; } }
+      }
+    };
+    try {
+      const paragraph = body.appendChild(makeSchedulingElement());
+      const oldRequest = createDeferred();
+      const newRequest = createDeferred();
+      const deferreds = [oldRequest, newRequest];
+      const requests = [];
+      const renders = [];
+      const manager = new PaperBilingualManager();
+      manager.mode = 'bilingual';
+      manager.maxConcurrency = 1;
+      manager.formulaProtector = {
+        protect: (element) => ({
+          protectedText: (element.innerText || element.textContent || '').trim(),
+          tokenMap: new Map()
+        }),
+        restore: (translation) => translation,
+        escapeHtml: (value) => value
+      };
+      manager.renderLoadingPlaceholder = (element, info) => {
+        info.transEl = createTranslationNodeDouble();
+      };
+      manager.requestTranslation = (text) => {
+        requests.push(text);
+        return deferreds[requests.length - 1].promise;
+      };
+      manager.renderTranslation = (element, info, translation) => {
+        renders.push({ element, translation });
+      };
+      manager.updateCapsuleStats = () => {};
+      manager.setupStorageListener();
+      manager.registerElement(paragraph);
+      const info = manager.elementStateMap.get(paragraph);
+      assert.equal(requests.length, 1);
+      assert.equal(manager.translationConfigGeneration, 0);
+
+      storageListener({ customModel: { oldValue: 'old', newValue: 'new' } }, 'sync');
+      assert.equal(manager.translationConfigGeneration, 1);
+      assert.equal(info.state, 'queued');
+      assert.equal(requests.length, 1);
+
+      oldRequest.resolve({ success: true, translation: 'old configuration response' });
+      await flushSchedulingPromises();
+      assert.deepEqual(renders, []);
+      assert.equal(manager.cache.size, 0);
+      assert.equal(requests.length, 2);
+      assert.equal(info.state, 'translating');
+
+      newRequest.resolve({ success: true, translation: 'new configuration response' });
+      await flushSchedulingPromises();
+      assert.deepEqual(renders, [{ element: paragraph, translation: 'new configuration response' }]);
+      assert.equal(manager.cache.get(paragraph.innerText), 'new configuration response');
+      assert.equal(info.state, 'done');
+      assert.equal(manager.activeRequests, 0);
+    } finally {
+      if (previousChrome === undefined) delete global.chrome;
+      else global.chrome = previousChrome;
+    }
+  });
+});
+
+test('every translation-affecting storage key advances the configuration generation', () => {
+  const cases = [
+    ['sync', 'customEngine'],
+    ['sync', 'customApiEndpoint'],
+    ['sync', 'customModel'],
+    ['sync', 'onlineFallback'],
+    ['local', 'customApiKey'],
+    ['local', 'glossaryVersion']
+  ];
+  const previousChrome = global.chrome;
+  try {
+    for (const [area, key] of cases) {
+      let storageListener = null;
+      global.chrome = {
+        storage: {
+          onChanged: { addListener(listener) { storageListener = listener; } }
+        }
+      };
+      const manager = new PaperBilingualManager();
+      manager.cache.set('paragraph', 'translation');
+      manager.setupStorageListener();
+      storageListener({ [key]: { oldValue: 'old', newValue: 'new' } }, area);
+      assert.equal(manager.translationConfigGeneration, 1, `${area}:${key}`);
+      assert.equal(manager.cache.size, 0, `${area}:${key}`);
+    }
+  } finally {
+    if (previousChrome === undefined) delete global.chrome;
+    else global.chrome = previousChrome;
+  }
+});
+
 test('dynamic observation ignores generated nodes and excluded subtrees without rescanning them', () => {
   const mutation = createObserverDouble();
   withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, ({ body }) => {

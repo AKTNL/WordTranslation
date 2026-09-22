@@ -1075,6 +1075,7 @@
       this.observedElements = new WeakSet();
       this.mutationObserver = null;
       this.nextRequestId = 0;
+      this.translationConfigGeneration = 0;
       this.inFlightTranslations = new Map();
 
       this.queue = [];
@@ -1202,14 +1203,14 @@
       if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.onChanged) return;
       chrome.storage.onChanged.addListener((changes, area) => {
         const translationConfigChanged = area === 'sync'
-          ? ['customEngine', 'customApiEndpoint', 'customModel'].some((key) => changes[key])
+          ? ['customEngine', 'customApiEndpoint', 'customModel', 'onlineFallback'].some((key) => changes[key])
           : area === 'local' && Boolean(changes.glossaryVersion || changes.customApiKey);
-        if (translationConfigChanged) this.cache.clear();
-
-        if (area !== 'sync') return;
-        if (changes.onlineFallback) {
+        if (area === 'sync' && changes.onlineFallback) {
           this.applyOnlineFallback(changes.onlineFallback.newValue !== false);
         }
+        if (translationConfigChanged) this.invalidateTranslationConfig();
+
+        if (area !== 'sync') return;
         if (changes.capsuleEnabled) {
           this.applyCapsuleEnabled(changes.capsuleEnabled.newValue !== false);
         }
@@ -1227,6 +1228,32 @@
       if (!this.onlineFallback && this.mode !== 'original') {
         this.mode = 'original';
         this.restoreOriginalView();
+      }
+    }
+
+    invalidateTranslationConfig() {
+      this.translationConfigGeneration++;
+      this.cache.clear();
+      this.inFlightTranslations.clear();
+      this.queue = [];
+
+      const elementsToReschedule = [];
+      for (const el of this.elements) {
+        const info = this.elementStateMap.get(el);
+        if (!info) continue;
+        const wasTranslating = info.state === 'translating';
+        const requestEntry = info.requestEntry;
+        info.requestId = null;
+        info.requestGeneration = null;
+        info.requestEntry = null;
+        info.state = 'idle';
+        if (requestEntry && !wasTranslating) this.releaseRequestEntry(null, requestEntry);
+        this.removeTranslationNode(info);
+        if (this.mode !== 'original' && this.isElementActive(el)) elementsToReschedule.push(el);
+      }
+
+      for (const el of elementsToReschedule) {
+        this.registerElement(el, { knownEligible: true });
       }
     }
 
@@ -1295,9 +1322,83 @@
       return Boolean(el) && el.isConnected !== false && this.registeredElements.has(el);
     }
 
-    isRequestCurrent(el, info, requestId) {
+    isRequestCurrent(el, info, requestId, requestGeneration) {
       return this.mode !== 'original' && this.isElementActive(el) &&
-        this.elementStateMap.get(el) === info && info.requestId === requestId;
+        this.elementStateMap.get(el) === info && info.requestId === requestId &&
+        info.requestGeneration === requestGeneration &&
+        this.translationConfigGeneration === requestGeneration;
+    }
+
+    getRequestEntryKey(generation, protectedText) {
+      return JSON.stringify([generation, protectedText]);
+    }
+
+    cleanupRequestEntry(entry) {
+      if (!entry || entry.leases !== 0) return;
+      if (this.inFlightTranslations.get(entry.mapKey) === entry) {
+        this.inFlightTranslations.delete(entry.mapKey);
+      }
+    }
+
+    retainRequestEntry(info, entry) {
+      if (!info || !entry) return false;
+      if (info.requestEntry === entry) return true;
+      if (info.requestEntry) this.releaseRequestEntry(info, info.requestEntry);
+      info.requestEntry = entry;
+      entry.leases++;
+      if (
+        entry.generation === this.translationConfigGeneration &&
+        !this.inFlightTranslations.has(entry.mapKey)
+      ) {
+        this.inFlightTranslations.set(entry.mapKey, entry);
+      }
+      return true;
+    }
+
+    releaseRequestEntry(info, entry) {
+      if (!entry) return;
+      if (info && info.requestEntry === entry) info.requestEntry = null;
+      entry.leases = Math.max(0, entry.leases - 1);
+      this.cleanupRequestEntry(entry);
+    }
+
+    createRequestEntry(info, generation, protectedText) {
+      const mapKey = this.getRequestEntryKey(generation, protectedText);
+      let entry = this.inFlightTranslations.get(mapKey);
+      if (!entry) {
+        entry = {
+          mapKey,
+          generation,
+          protectedText,
+          leases: 0,
+          settled: false,
+          promise: null
+        };
+        const request = Promise.resolve(this.requestTranslation(protectedText));
+        entry.promise = request.then(
+          (response) => {
+            entry.settled = true;
+            this.cleanupRequestEntry(entry);
+            return response;
+          },
+          (error) => {
+            entry.settled = true;
+            this.cleanupRequestEntry(entry);
+            throw error;
+          }
+        );
+        this.inFlightTranslations.set(mapKey, entry);
+      }
+      this.retainRequestEntry(info, entry);
+      return entry;
+    }
+
+    adoptRequestEntry(info, entries) {
+      if (!info || !entries) return;
+      const entry = entries.find((candidate) => {
+        return candidate && candidate.generation === this.translationConfigGeneration;
+      });
+      if (entry) this.retainRequestEntry(info, entry);
     }
 
     removeTranslationNode(info) {
@@ -1306,7 +1407,7 @@
       info.transEl = null;
     }
 
-    unregisterElement(el) {
+    unregisterElement(el, options = {}) {
       if (!el) return false;
       const wasRegistered = this.registeredElements.delete(el);
       this.observedElements.delete(el);
@@ -1318,8 +1419,21 @@
 
       const info = this.elementStateMap.get(el);
       if (info) {
+        const requestEntry = info.requestEntry;
+        const wasTranslating = info.state === 'translating';
         info.requestId = null;
+        info.requestGeneration = null;
+        info.requestEntry = null;
         info.state = 'idle';
+        if (requestEntry && !wasTranslating) {
+          this.releaseRequestEntry(null, requestEntry);
+        } else if (
+          requestEntry && !options.preserveRequestEntry &&
+          requestEntry.leases <= 1 &&
+          this.inFlightTranslations.get(requestEntry.mapKey) === requestEntry
+        ) {
+          this.inFlightTranslations.delete(requestEntry.mapKey);
+        }
         this.removeTranslationNode(info);
         this.elementStateMap.delete(el);
       }
@@ -1350,16 +1464,20 @@
     }
 
     reconcileCandidateAncestors(el) {
+      const requestEntries = [];
       let ancestor = el && el.parentElement;
       while (ancestor) {
         if (
           this.registeredElements.has(ancestor) &&
           String(ancestor.tagName || '').toUpperCase() === 'DIV'
         ) {
-          this.unregisterElement(ancestor);
+          const info = this.elementStateMap.get(ancestor);
+          if (info && info.requestEntry) requestEntries.push(info.requestEntry);
+          this.unregisterElement(ancestor, { preserveRequestEntry: true });
         }
         ancestor = ancestor.parentElement;
       }
+      return requestEntries;
     }
 
     registerElement(el, options = {}) {
@@ -1375,6 +1493,7 @@
         info = { state: 'idle', transEl: null };
         this.elementStateMap.set(el, info);
       }
+      this.adoptRequestEntry(info, options.requestEntries);
       if (!this.registeredElements.has(el)) {
         this.registeredElements.add(el);
         this.elements.push(el);
@@ -1407,8 +1526,11 @@
       let changed = false;
       for (const candidate of new Set(candidates)) {
         if (!candidate || candidate.isConnected === false) continue;
-        this.reconcileCandidateAncestors(candidate);
-        changed = this.registerElement(candidate, { knownEligible: true }) || changed;
+        const requestEntries = this.reconcileCandidateAncestors(candidate);
+        changed = this.registerElement(candidate, {
+          knownEligible: true,
+          requestEntries
+        }) || changed;
       }
       return changed;
     }
@@ -1551,6 +1673,7 @@
         this.mutationObserver.disconnect();
       }
       this.observedElements = new WeakSet();
+      this.inFlightTranslations.clear();
 
       // 2. Reset every pending item before clearing the queue. A page rescan may
       // have removed an element from this.elements while it was still queued.
@@ -1558,12 +1681,15 @@
       this.queue = [];
       for (const el of pendingElements) {
         const info = this.elementStateMap.get(el);
-        if (info && info.state === 'queued') {
+        if (info && (info.state === 'queued' || info.state === 'translating')) {
+          const wasTranslating = info.state === 'translating';
+          const requestEntry = info.requestEntry;
+          info.requestId = null;
+          info.requestGeneration = null;
+          info.requestEntry = null;
           info.state = 'idle';
-          if (info.transEl && info.transEl.classList.contains('pd-bilingual-loading')) {
-            info.transEl.remove();
-            info.transEl = null;
-          }
+          if (requestEntry && !wasTranslating) this.releaseRequestEntry(null, requestEntry);
+          this.removeTranslationNode(info);
         }
       }
 
@@ -1647,11 +1773,13 @@
 
       info.state = 'translating';
       const requestId = ++this.nextRequestId;
+      const requestGeneration = this.translationConfigGeneration;
       info.requestId = requestId;
+      info.requestGeneration = requestGeneration;
       this.activeRequests++;
 
       try {
-        await this.translateElement(el, info, requestId);
+        await this.translateElement(el, info, requestId, requestGeneration);
       } catch (err) {
         console.warn('Paragraph translation error:', err);
       } finally {
@@ -1665,8 +1793,8 @@
     /**
      * Translates a single academic paragraph with formula protection & caching
      */
-    async translateElement(el, info, requestId) {
-      if (!this.isRequestCurrent(el, info, requestId)) return;
+    async translateElement(el, info, requestId, requestGeneration) {
+      if (!this.isRequestCurrent(el, info, requestId, requestGeneration)) return;
       const rawText = (el.innerText || el.textContent || '').trim();
       if (!rawText) {
         info.state = 'done';
@@ -1677,7 +1805,7 @@
       // Check cache first
       if (this.cache.has(rawText)) {
         const cachedTrans = this.cache.get(rawText);
-        if (!this.isRequestCurrent(el, info, requestId)) return;
+        if (!this.isRequestCurrent(el, info, requestId, requestGeneration)) return;
         this.renderTranslation(el, info, cachedTrans);
         info.state = 'done';
         return;
@@ -1686,31 +1814,31 @@
       // Protect math formulas and structure
       const { protectedText, tokenMap } = this.formulaProtector.protect(el);
 
-      if (!this.isRequestCurrent(el, info, requestId)) return;
-      const requestKey = protectedText;
-      let request = this.inFlightTranslations.get(requestKey);
-      if (!request) {
-        request = Promise.resolve(this.requestTranslation(protectedText));
-        this.inFlightTranslations.set(requestKey, request);
+      if (!this.isRequestCurrent(el, info, requestId, requestGeneration)) return;
+      const requestKey = this.getRequestEntryKey(requestGeneration, protectedText);
+      let requestEntry = info.requestEntry;
+      if (
+        !requestEntry || requestEntry.mapKey !== requestKey ||
+        requestEntry.generation !== requestGeneration
+      ) {
+        if (requestEntry) this.releaseRequestEntry(info, requestEntry);
+        requestEntry = this.createRequestEntry(info, requestGeneration, protectedText);
       }
       let response;
       try {
-        response = await request;
+        response = await requestEntry.promise;
       } finally {
-        if (this.inFlightTranslations.get(requestKey) === request) {
-          this.inFlightTranslations.delete(requestKey);
-        }
+        this.releaseRequestEntry(info, requestEntry);
       }
 
+      if (!this.isRequestCurrent(el, info, requestId, requestGeneration)) return;
       if (response && response.success && response.translation) {
         // Restore protected formulas
         const restoredHtml = this.formulaProtector.restore(response.translation, tokenMap);
         this.cache.set(rawText, restoredHtml);
-        if (!this.isRequestCurrent(el, info, requestId)) return;
         this.renderTranslation(el, info, restoredHtml);
         info.state = 'done';
       } else {
-        if (!this.isRequestCurrent(el, info, requestId)) return;
         // Translation failed
         if (info.transEl) {
           const errMsg = response?.error || '网络超时';
