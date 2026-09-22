@@ -7,6 +7,12 @@
 (function (global) {
   'use strict';
 
+  const isEnglishSourceText = typeof global.paperDictIsEnglishSourceText === 'function'
+    ? global.paperDictIsEnglishSourceText
+    : (typeof require === 'function'
+      ? require('./dict_service.js').isEnglishSourceText
+      : () => false);
+
   /**
    * 1. Formula & Structure Protection (FormulaProtector)
    * Prevents translation engines from garbling math formulas, LaTeX tokens, and MathML.
@@ -267,8 +273,7 @@
         if (rawText.length < 15) return false;
       }
 
-      // Must contain at least some English characters
-      if (!/[a-zA-Z]{2,}/.test(rawText)) return false;
+      if (!isEnglishSourceText(rawText)) return false;
 
       // Ensure element is visible
       if (typeof window !== 'undefined' && el.offsetParent === null && el.offsetHeight === 0 && el.offsetWidth === 0) {
@@ -375,6 +380,13 @@
 
     disableCapsule() {
       this.hideCapsule();
+    }
+
+    destroy() {
+      if (this.host) this.host.remove();
+      this.host = null;
+      this.shadow = null;
+      this.isExpanded = false;
     }
 
     init() {
@@ -794,6 +806,9 @@
       this.activeRequests = 0;
       this.maxConcurrency = 2;
       this.toastTimer = null;
+      this.onlineFallback = true;
+      this.isBlacklisted = false;
+      this.capsuleEnabled = true;
     }
 
     init() {
@@ -801,6 +816,7 @@
 
       // Setup Storage Sync & Initialize Capsule
       this.loadSettings();
+      this.setupStorageListener();
 
       // Initialize Viewport IntersectionObserver
       this.setupObserver();
@@ -838,6 +854,7 @@
       this.capsule = new CapsuleUI({
         onModeChange: (newMode) => this.setMode(newMode),
         onHideCapsule: () => {
+          this.applyCapsuleEnabled(false);
           if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
             chrome.storage.sync.set({ capsuleEnabled: false });
           }
@@ -865,18 +882,19 @@
           bilingualMode: 'original',
           bilingualDefault: false,
           capsuleEnabled: true,
+          onlineFallback: true,
           blacklist: []
         }, (items) => {
           if (items) {
+            this.applyOnlineFallback(items.onlineFallback !== false);
             const currentHost = (typeof window !== 'undefined' && window.location) ? window.location.hostname : '';
             if (items.blacklist && Array.isArray(items.blacklist) && items.blacklist.some(d => currentHost === d || currentHost.endsWith('.' + d))) {
               this.isBlacklisted = true;
+              this.applyCapsuleEnabled(items.capsuleEnabled !== false);
               return;
             }
 
-            if (items.capsuleEnabled !== false) {
-              this.initCapsule();
-            }
+            this.applyCapsuleEnabled(items.capsuleEnabled !== false);
 
             if (items.bilingualDefault && items.bilingualMode === 'original') {
               this.setMode('bilingual');
@@ -888,6 +906,52 @@
       } else {
         this.initCapsule();
       }
+    }
+
+    setupStorageListener() {
+      if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.onChanged) return;
+      chrome.storage.onChanged.addListener((changes, area) => {
+        const translationConfigChanged = area === 'sync'
+          ? ['customEngine', 'customApiEndpoint', 'customModel'].some((key) => changes[key])
+          : area === 'local' && Boolean(changes.glossaryVersion || changes.customApiKey);
+        if (translationConfigChanged) this.cache.clear();
+
+        if (area !== 'sync') return;
+        if (changes.onlineFallback) {
+          this.applyOnlineFallback(changes.onlineFallback.newValue !== false);
+        }
+        if (changes.capsuleEnabled) {
+          this.applyCapsuleEnabled(changes.capsuleEnabled.newValue !== false);
+        }
+        if (changes.blacklist) {
+          const currentHost = (typeof window !== 'undefined' && window.location) ? window.location.hostname : '';
+          const list = Array.isArray(changes.blacklist.newValue) ? changes.blacklist.newValue : [];
+          this.isBlacklisted = list.some((domain) => currentHost === domain || currentHost.endsWith('.' + domain));
+          this.applyCapsuleEnabled(this.capsuleEnabled);
+        }
+      });
+    }
+
+    applyOnlineFallback(enabled) {
+      this.onlineFallback = enabled !== false;
+      if (!this.onlineFallback && this.mode !== 'original') {
+        this.mode = 'original';
+        this.restoreOriginalView();
+      }
+    }
+
+    applyCapsuleEnabled(enabled) {
+      this.capsuleEnabled = enabled !== false;
+      if (!this.capsuleEnabled || this.isBlacklisted) {
+        const capsule = this.capsule;
+        this.capsule = null;
+        if (capsule) {
+          if (typeof capsule.destroy === 'function') capsule.destroy();
+          else if (capsule.host) capsule.host.remove();
+        }
+        return;
+      }
+      this.initCapsule();
     }
 
     setupShortcut() {
@@ -940,6 +1004,10 @@
      */
     setMode(newMode) {
       if (!['original', 'bilingual', 'chinese'].includes(newMode)) return;
+      if (newMode !== 'original' && !this.onlineFallback) {
+        this.showToast('整页翻译需要在线引擎，请先在设置中开启在线翻译');
+        return;
+      }
       this.mode = newMode;
 
       // Update HTML dataset for global CSS rules
@@ -1160,6 +1228,14 @@
 
     requestTranslation(text) {
       return new Promise((resolve) => {
+        if (!this.onlineFallback) {
+          resolve({
+            success: false,
+            code: 'ONLINE_DISABLED',
+            error: '整页翻译需要在线引擎，请先在设置中开启在线翻译'
+          });
+          return;
+        }
         if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
           chrome.runtime.sendMessage({
             type: 'TRANSLATE_ONLINE',

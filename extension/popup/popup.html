@@ -24,7 +24,7 @@
       <button class="nav-tab active" data-tab="tab-search-settings">查词与设置</button>
       <button class="nav-tab" data-tab="tab-wordbook">生词本 <span class="tab-badge" id="nav-wordbook-count">0</span></button>
       <button class="nav-tab" data-tab="tab-history">查词历史</button>
-      <button class="nav-tab" data-tab="tab-api">自定义 API</button>
+      <button class="nav-tab" data-tab="tab-api">翻译与术语</button>
     </nav>
 
     <!-- Tab 1: Search & Settings -->
@@ -234,7 +234,7 @@
       </section>
     </main>
 
-    <!-- Tab 4: Custom API (自定义翻译引擎) -->
+    <!-- Tab 4: Translation engines and glossary -->
     <main id="tab-api" class="tab-pane" style="display: none;">
       <section class="api-section">
         <h2 class="section-title">学术翻译引擎配置</h2>
@@ -265,8 +265,48 @@
           </div>
         </div>
 
-        <button id="btn-save-api" class="btn-primary-block" style="margin-top: 14px;">保存 API 配置</button>
-        <div id="api-save-tip" class="api-tip-text" style="display: none;">配置已成功保存！</div>
+        <div class="config-action-row">
+          <button id="btn-test-api" class="btn-secondary-block">测试连接</button>
+          <button id="btn-save-api" class="btn-primary-block">保存配置</button>
+        </div>
+        <div id="api-save-tip" class="api-status-text" role="status" aria-live="polite"></div>
+      </section>
+
+      <section class="glossary-section">
+        <div class="section-header-row">
+          <h2 class="section-title">论文术语库</h2>
+          <span id="glossary-count" class="glossary-count">0 条自定义</span>
+        </div>
+
+        <div id="glossary-pack-list" class="glossary-pack-list">
+          <label><input type="checkbox" value="general-academic">通用学术与统计</label>
+          <label><input type="checkbox" value="computer-ai">计算机与 AI</label>
+          <label><input type="checkbox" value="materials-engineering">材料与工程</label>
+          <label><input type="checkbox" value="biomedical">医学与生命科学</label>
+          <label><input type="checkbox" value="economics-social-science">经济与社会科学</label>
+        </div>
+
+        <div class="glossary-editor">
+          <input id="glossary-source" class="custom-input" type="text" placeholder="English term">
+          <input id="glossary-target" class="custom-input" type="text" placeholder="中文译法">
+          <button id="btn-save-term" class="btn-tool-sm">添加</button>
+          <button id="btn-cancel-term" class="btn-tool-sm" style="display: none;">取消</button>
+        </div>
+
+        <div class="glossary-toolbar">
+          <input id="glossary-search" class="custom-input" type="search" placeholder="搜索自定义术语">
+          <label class="btn-tool-sm file-button" title="导入 UTF-8 CSV 或 JSON">
+            导入
+            <input id="input-glossary-file" type="file" accept=".csv,.json,text/csv,application/json">
+          </label>
+          <button id="btn-export-glossary" class="btn-tool-sm">导出</button>
+          <button id="btn-clear-glossary" class="btn-tool-sm danger">清空</button>
+        </div>
+
+        <div id="glossary-status" class="api-status-text" role="status" aria-live="polite"></div>
+        <div id="user-glossary-list" class="user-glossary-list">
+          <div class="empty-hint">暂无自定义术语</div>
+        </div>
       </section>
     </main>
 
@@ -283,6 +323,7 @@
 
   <script src="../dict/academic_dict.js"></script>
   <script src="../dict_service.js"></script>
+  <script src="../glossary_service.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

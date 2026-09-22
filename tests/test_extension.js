@@ -50,6 +50,25 @@ const dictData = JSON.parse(fs.readFileSync(dictJsonPath, 'utf8'));
 const wordCount = Object.keys(dictData).length;
 assert(wordCount >= 15000, `Dictionary contains ${wordCount} words (>= 15,000)`);
 
+const glossaryPackIds = [
+  'general-academic',
+  'computer-ai',
+  'materials-engineering',
+  'biomedical',
+  'economics-social-science'
+];
+for (const packId of glossaryPackIds) {
+  const packPath = path.join(__dirname, `../extension/glossaries/${packId}.json`);
+  assert(fs.existsSync(packPath), `Glossary pack exists: ${packId}`);
+  const pack = JSON.parse(fs.readFileSync(packPath, 'utf8'));
+  assert(pack.id === packId, `Glossary pack id matches filename: ${packId}`);
+  assert(Array.isArray(pack.terms) && pack.terms.length >= 15, `Glossary pack has starter terms: ${packId}`);
+  const normalizedSources = pack.terms.map((entry) => String(entry.source || '').trim().toLowerCase());
+  assert(normalizedSources.every(Boolean), `Glossary pack sources are non-empty: ${packId}`);
+  assert(new Set(normalizedSources).size === normalizedSources.length, `Glossary pack has no duplicate sources: ${packId}`);
+  assert(pack.terms.every((entry) => String(entry.target || '').trim()), `Glossary pack targets are non-empty: ${packId}`);
+}
+
 // 3. Test DictService Preprocessing & Lookups
 console.log('\n[Test 3: DictService Functionality]');
 const service = new DictService(dictData);
@@ -222,6 +241,8 @@ const jsFiles = [
   'extension/bilingual.js',
   'extension/content.js',
   'extension/dict_service.js',
+  'extension/glossary_service.js',
+  'extension/translation_service.js',
   'extension/popup/popup.js',
   'extension/reader/reader.js'
 ];

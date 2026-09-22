@@ -648,7 +648,7 @@
     ` : '';
 
     const sourceBadge = data.source === 'offline' 
-      ? `<span class="badge-source offline">● 离线学术词典</span>`
+      ? `<span class="badge-source offline">● ${escapeHtml(data.sourceName || '离线学术词典')}</span>`
       : `<span class="badge-source online">● ${escapeHtml(data.sourceName || '在线翻译')}</span>`;
 
     cardEl.innerHTML = `
@@ -771,6 +771,30 @@
 
     const isSingleWord = dictService.isSingleWord(cleaned);
 
+    try {
+      const glossaryResult = await chrome.runtime.sendMessage({
+        type: 'LOOKUP_GLOSSARY',
+        text: cleaned
+      });
+      if (glossaryResult && glossaryResult.success && glossaryResult.found) {
+        renderCard({
+          title: cleaned,
+          phonetic: '',
+          definitions: isSingleWord ? [{ pos: '术语', text: glossaryResult.translation }] : [],
+          translation: glossaryResult.translation,
+          rawTrans: glossaryResult.translation,
+          showSpeaker: isSingleWord,
+          source: 'offline',
+          sourceName: glossaryResult.source || '离线术语库',
+          isSentence: !isSingleWord,
+          loading: false
+        }, rect);
+        return;
+      }
+    } catch (error) {
+      // The built-in dictionary remains available if the background worker is restarting.
+    }
+
     if (isSingleWord) {
       const localResult = dictService.lookupLocal(cleaned);
 
@@ -849,6 +873,17 @@
           loading: false
         }, rect);
       }
+    } else {
+      renderCard({
+        title: cleaned.length > 32 ? cleaned.slice(0, 32) + '...' : cleaned,
+        translation: '本地词典与术语库未收录；整句翻译需要在线引擎',
+        rawTrans: '',
+        showSpeaker: false,
+        source: 'offline',
+        sourceName: '仅离线查询',
+        isSentence: true,
+        loading: false
+      }, rect);
     }
   }
 

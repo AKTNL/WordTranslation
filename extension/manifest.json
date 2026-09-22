@@ -43,6 +43,7 @@
       "js": [
         "dict/academic_dict.js",
         "dict_service.js",
+        "glossary_service.js",
         "content.js",
         "bilingual.js"
       ],
@@ -55,6 +56,7 @@
       "resources": [
         "icons/*",
         "dict/*",
+        "glossaries/*",
         "reader/*",
         "bilingual.css"
       ],

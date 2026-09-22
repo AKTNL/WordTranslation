@@ -7,6 +7,13 @@
 (function (global) {
   'use strict';
 
+  function isEnglishSourceText(text) {
+    const value = String(text || '').trim();
+    if (!value || /\p{Script=Han}/u.test(value)) return false;
+    const latinLetters = value.match(/[a-zA-Z]/g);
+    return Boolean(latinLetters && latinLetters.length >= 2);
+  }
+
   // Irregular English words mapping for academic and common vocabulary
   const IRREGULAR_WORDS = {
     // Plural forms in science & academic papers
@@ -172,16 +179,17 @@
       // Pure symbols / code tokens
       if (/^[{}()\[\]<>+=/\\*&^%$#@!~`|;:'",.?_-]+$/.test(t)) return false;
 
-      // Filter out dominant Chinese text (e.g. user selected a Chinese sentence with 1-2 English acronyms)
-      const zhMatches = t.match(/[\u4e00-\u9fa5]/g);
-      if (zhMatches && zhMatches.length >= 2) return false;
+      if (!this.isEnglishSourceText(t)) return false;
 
       // Filter out programming statements and code structures
       if (/\b(for|while|if|else|return|function|const|let|var|class|import|from|def)\s*[\(\{]/.test(t)) return false;
       if (/(?:=>|===|!==|\+\+|--|;\s*$)/.test(t)) return false;
 
-      // Has at least one letter
-      return /[a-zA-Z]/.test(t);
+      return true;
+    }
+
+    isEnglishSourceText(text) {
+      return isEnglishSourceText(text);
     }
 
     /**
@@ -371,9 +379,10 @@
 
   // Export for browser and Node.js
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { DictService, IRREGULAR_WORDS };
+    module.exports = { DictService, IRREGULAR_WORDS, isEnglishSourceText };
   } else {
     global.DictService = DictService;
+    global.paperDictIsEnglishSourceText = isEnglishSourceText;
     global.paperDictService = new DictService();
   }
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -17,7 +17,7 @@
 - Modify: `extension/bilingual.js`
 - Test: `tests/test_translation_maintenance.js`
 
-- [ ] **Step 1: Write the failing eligibility tests**
+- [x] **Step 1: Write the failing eligibility tests**
 
 ```js
 assert.equal(service.isEnglishSourceText('深度学习'), false);
@@ -26,13 +26,13 @@ assert.equal(service.isEnglishSourceText('retrieval augmented generation'), true
 assert.equal(service.isLookupEligible('A中'), false);
 ```
 
-- [ ] **Step 2: Run the focused test and confirm the mixed-language assertion fails**
+- [x] **Step 2: Run the focused test and confirm the mixed-language assertion fails**
 
 Run: `node tests/test_translation_maintenance.js`
 
 Expected: `A中` is incorrectly eligible before implementation.
 
-- [ ] **Step 3: Implement one shared English-source predicate**
+- [x] **Step 3: Implement one shared English-source predicate**
 
 ```js
 isEnglishSourceText(text) {
@@ -44,7 +44,7 @@ isEnglishSourceText(text) {
 
 Call this predicate from `isLookupEligible` and `AcademicFilter.isEligible`.
 
-- [ ] **Step 4: Run the focused and core tests**
+- [x] **Step 4: Run the focused and core tests**
 
 Run: `node tests/test_translation_maintenance.js && npm test`
 
@@ -62,7 +62,7 @@ Expected: all eligibility and existing tests pass.
 - Modify: `extension/manifest.json`
 - Test: `tests/test_translation_maintenance.js`
 
-- [ ] **Step 1: Write failing glossary parsing and matching tests**
+- [x] **Step 1: Write failing glossary parsing and matching tests**
 
 ```js
 const glossary = new GlossaryService([
@@ -77,13 +77,13 @@ assert.deepEqual(GlossaryService.parseCsv('source,target\n"ablation study","消�
 ]);
 ```
 
-- [ ] **Step 2: Run the test and confirm the service is missing**
+- [x] **Step 2: Run the test and confirm the service is missing**
 
 Run: `node tests/test_translation_maintenance.js`
 
 Expected: module-not-found failure for `glossary_service.js`.
 
-- [ ] **Step 3: Implement normalization, CSV/JSON parsing, merge, exact lookup, protect, and restore**
+- [x] **Step 3: Implement normalization, CSV/JSON parsing, merge, exact lookup, protect, and restore**
 
 ```js
 class GlossaryService {
@@ -97,7 +97,7 @@ class GlossaryService {
 }
 ```
 
-- [ ] **Step 4: Add versioned starter-pack assets**
+- [x] **Step 4: Add versioned starter-pack assets**
 
 Each file uses:
 
@@ -110,7 +110,7 @@ Each file uses:
 }
 ```
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run: `node tests/test_translation_maintenance.js`
 
@@ -123,7 +123,7 @@ Expected: CSV/JSON, priority, longest-match, token restoration, and built-in-pac
 - Modify: `extension/background.js`
 - Test: `tests/test_translation_engines.js`
 
-- [ ] **Step 1: Write failing adapter tests with injected fetch**
+- [x] **Step 1: Write failing adapter tests with injected fetch**
 
 ```js
 const service = new TranslationService({ fetchImpl: fakeFetch });
@@ -136,13 +136,13 @@ assert.equal(fakeFetch.calls.length, 1);
 
 Also assert DeepL authorization, 401/429 mapping, timeout, invalid response, and no public-engine fallback.
 
-- [ ] **Step 2: Run the tests and confirm the adapter is missing**
+- [x] **Step 2: Run the tests and confirm the adapter is missing**
 
 Run: `node tests/test_translation_engines.js`
 
 Expected: module-not-found failure for `translation_service.js`.
 
-- [ ] **Step 3: Implement strict adapters and stable errors**
+- [x] **Step 3: Implement strict adapters and stable errors**
 
 ```js
 async translate(text, config) {
@@ -154,7 +154,7 @@ async translate(text, config) {
 
 All adapters use a shared timeout wrapper and return `{ success, translation, source, engine }` or `{ success: false, code, error, engine }`.
 
-- [ ] **Step 4: Add background messages for translation and connection testing**
+- [x] **Step 4: Add background messages for translation and connection testing**
 
 ```js
 if (request.type === 'TEST_TRANSLATION_ENGINE') {
@@ -165,7 +165,7 @@ if (request.type === 'TEST_TRANSLATION_ENGINE') {
 
 Migrate `customApiKey` from sync storage to local storage and remove silent fallback branches.
 
-- [ ] **Step 5: Run adapter and core tests**
+- [x] **Step 5: Run adapter and core tests**
 
 Run: `node tests/test_translation_engines.js && npm test`
 
@@ -181,7 +181,7 @@ Expected: all tests pass without real network credentials.
 - Modify: `extension/manifest.json`
 - Test: `tests/test_translation_maintenance.js`
 
-- [ ] **Step 1: Write failing integration-unit tests**
+- [x] **Step 1: Write failing integration-unit tests**
 
 ```js
 assert.equal(buildCacheKey('text', { engine: 'openai', model: 'a', glossaryVersion: 1 })
@@ -189,17 +189,17 @@ assert.equal(buildCacheKey('text', { engine: 'openai', model: 'a', glossaryVersi
 assert.equal(shouldRequestOnline({ onlineFallback: false }), false);
 ```
 
-- [ ] **Step 2: Confirm tests fail before integration**
+- [x] **Step 2: Confirm tests fail before integration**
 
 Run: `node tests/test_translation_maintenance.js`
 
 Expected: cache and online-policy helpers are missing.
 
-- [ ] **Step 3: Integrate glossary priority and online policy**
+- [x] **Step 3: Integrate glossary priority and online policy**
 
 Content lookup order becomes user glossary, enabled packs, dictionary, then online engine. Bilingual and reader translation protect terms before requests and restore them after successful responses.
 
-- [ ] **Step 4: Scope persisted cache keys**
+- [x] **Step 4: Scope persisted cache keys**
 
 ```js
 const cacheKey = JSON.stringify([
@@ -207,7 +207,7 @@ const cacheKey = JSON.stringify([
 ]);
 ```
 
-- [ ] **Step 5: Verify focused and complete tests**
+- [x] **Step 5: Verify focused and complete tests**
 
 Run: `node tests/test_translation_maintenance.js && npm test && npm run test:diagnostics`
 
@@ -219,7 +219,7 @@ Expected: all tests pass.
 - Modify: `extension/bilingual.js`
 - Test: `tests/test_translation_maintenance.js`
 
-- [ ] **Step 1: Write a failing manager lifecycle test**
+- [x] **Step 1: Write a failing manager lifecycle test**
 
 ```js
 manager.applyCapsuleEnabled(false);
@@ -228,13 +228,13 @@ manager.applyCapsuleEnabled(true);
 assert.notEqual(manager.capsule, null);
 ```
 
-- [ ] **Step 2: Run and confirm the method is missing**
+- [x] **Step 2: Run and confirm the method is missing**
 
 Run: `node tests/test_translation_maintenance.js`
 
 Expected: `applyCapsuleEnabled` is not defined.
 
-- [ ] **Step 3: Implement destroy/recreate lifecycle and storage listener**
+- [x] **Step 3: Implement destroy/recreate lifecycle and storage listener**
 
 ```js
 applyCapsuleEnabled(enabled) {
@@ -247,7 +247,7 @@ applyCapsuleEnabled(enabled) {
 }
 ```
 
-- [ ] **Step 4: Run lifecycle and core tests**
+- [x] **Step 4: Run lifecycle and core tests**
 
 Run: `node tests/test_translation_maintenance.js && npm test`
 
@@ -261,7 +261,7 @@ Expected: immediate off/on lifecycle tests pass.
 - Modify: `extension/popup/popup.js`
 - Test: `tests/test_translation_maintenance.js`
 
-- [ ] **Step 1: Add failing static contract tests**
+- [x] **Step 1: Add failing static contract tests**
 
 ```js
 assert.match(popupHtml, /btn-test-api/);
@@ -270,21 +270,21 @@ assert.match(popupJs, /TEST_TRANSLATION_ENGINE/);
 assert.match(popupJs, /GlossaryService\.parse/);
 ```
 
-- [ ] **Step 2: Run and confirm controls are absent**
+- [x] **Step 2: Run and confirm controls are absent**
 
 Run: `node tests/test_translation_maintenance.js`
 
 Expected: missing API test and glossary controls.
 
-- [ ] **Step 3: Implement validated API save/test controls**
+- [x] **Step 3: Implement validated API save/test controls**
 
 The test button sends only the current form configuration. Save writes secrets to local storage only after validation and reports the real response status.
 
-- [ ] **Step 4: Implement glossary pack and user-entry controls**
+- [x] **Step 4: Implement glossary pack and user-entry controls**
 
 Use native file input, search field, compact editable rows, pack checkboxes, and import/export actions. Mutations write `userGlossary`, `enabledGlossaryPacks`, and an incremented `glossaryVersion` to local storage.
 
-- [ ] **Step 5: Run focused tests and syntax validation**
+- [x] **Step 5: Run focused tests and syntax validation**
 
 Run: `node tests/test_translation_maintenance.js && node --check extension/popup/popup.js`
 
@@ -297,25 +297,24 @@ Expected: UI contracts and syntax pass.
 - Modify: `package.json`
 - Modify: `.trellis/tasks/09-22-translation-maintenance/task.json`
 
-- [ ] **Step 1: Document offline boundaries, terminology, and API testing**
+- [x] **Step 1: Document offline boundaries, terminology, and API testing**
 
 Explain that offline capability covers word/term lookup, while full-page translation requires a selected online engine.
 
-- [ ] **Step 2: Add maintenance tests to the default test script**
+- [x] **Step 2: Add maintenance tests to the default test script**
 
 ```json
 "test": "node tests/test_extension.js && node tests/test_translation_maintenance.js && node tests/test_translation_engines.js"
 ```
 
-- [ ] **Step 3: Run fresh complete verification**
+- [x] **Step 3: Run fresh complete verification**
 
 Run: `npm test && npm run test:diagnostics && node tests/test_ux_edge_cases.js && git diff --check`
 
 Expected: zero test failures, zero syntax failures, and no whitespace errors.
 
-- [ ] **Step 4: Inspect the branch diff and commit implementation**
+- [x] **Step 4: Inspect the branch diff and commit implementation**
 
 Run: `git diff --stat main...HEAD` and `git status --short`
 
 Expected: only task-scoped code, tests, glossary assets, and documentation are changed. Do not create a pull request until the user explicitly approves the reviewed implementation.
-

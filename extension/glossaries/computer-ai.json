@@ -1,0 +1,27 @@
+{
+  "id": "computer-ai",
+  "name": "计算机与人工智能",
+  "version": 1,
+  "terms": [
+    { "source": "attention mechanism", "target": "注意力机制" },
+    { "source": "backpropagation", "target": "反向传播" },
+    { "source": "convolutional neural network", "target": "卷积神经网络" },
+    { "source": "diffusion model", "target": "扩散模型" },
+    { "source": "fine-tuning", "target": "微调" },
+    { "source": "gradient descent", "target": "梯度下降" },
+    { "source": "large language model", "target": "大语言模型" },
+    { "source": "prompt engineering", "target": "提示工程" },
+    { "source": "reinforcement learning", "target": "强化学习" },
+    { "source": "retrieval-augmented generation", "target": "检索增强生成" },
+    { "source": "self-supervised learning", "target": "自监督学习" },
+    { "source": "supervised learning", "target": "监督学习" },
+    { "source": "test set", "target": "测试集" },
+    { "source": "tokenization", "target": "分词" },
+    { "source": "training set", "target": "训练集" },
+    { "source": "transfer learning", "target": "迁移学习" },
+    { "source": "transformer architecture", "target": "Transformer 架构" },
+    { "source": "unsupervised learning", "target": "无监督学习" },
+    { "source": "validation set", "target": "验证集" },
+    { "source": "word embedding", "target": "词嵌入" }
+  ]
+}

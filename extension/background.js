@@ -4,6 +4,8 @@
  * persistent cache with chrome.storage.local, context menu actions, and reader navigation.
  */
 
+importScripts('translation_service.js', 'glossary_service.js');
+
 // Default settings
 const DEFAULT_SETTINGS = {
   enabled: true,
@@ -17,7 +19,6 @@ const DEFAULT_SETTINGS = {
   capsuleEnabled: true,
   blacklist: [],
   customEngine: 'default', // 'default' | 'deepl' | 'openai'
-  customApiKey: '',
   customApiEndpoint: '',
   customModel: ''
 };
@@ -42,6 +43,13 @@ function isPdfUrl(url) {
 chrome.runtime.onInstalled.addListener(async () => {
   chrome.storage.sync.get(DEFAULT_SETTINGS, (items) => {
     chrome.storage.sync.set(Object.assign({}, DEFAULT_SETTINGS, items));
+  });
+
+  chrome.storage.sync.get(['customApiKey'], (legacy) => {
+    if (!legacy.customApiKey) return;
+    chrome.storage.local.set({ customApiKey: legacy.customApiKey }, () => {
+      chrome.storage.sync.remove('customApiKey');
+    });
   });
 
   // Re-create context menus safely
@@ -226,6 +234,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Keep channel open for async response
   }
 
+  if (request.type === 'TEST_TRANSLATION_ENGINE') {
+    testTranslationEngine(request.config || {})
+      .then((res) => sendResponse(res))
+      .catch((err) => sendResponse({ success: false, code: 'NETWORK_ERROR', error: err.message || '连接测试失败' }));
+    return true;
+  }
+
+  if (request.type === 'LOOKUP_GLOSSARY') {
+    lookupGlossary(request.text)
+      .then((res) => sendResponse(res))
+      .catch((err) => sendResponse({ success: false, error: err.message || '术语查询失败' }));
+    return true;
+  }
+
   if (request.type === 'OPEN_READER') {
     const url = request.fileUrl
       ? chrome.runtime.getURL(`reader/reader.html?file=${encodeURIComponent(request.fileUrl)}`)
@@ -241,239 +263,147 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-/**
- * Multi-engine online translation with user custom API support, caching and failover
- */
-async function handleOnlineTranslation(text) {
-  if (!text || !text.trim()) {
-    return { success: false, error: '输入文本为空' };
-  }
+const translationService = new TranslationService();
+const GLOSSARY_PACK_FILES = {
+  'general-academic': 'glossaries/general-academic.json',
+  'computer-ai': 'glossaries/computer-ai.json',
+  'materials-engineering': 'glossaries/materials-engineering.json',
+  biomedical: 'glossaries/biomedical.json',
+  'economics-social-science': 'glossaries/economics-social-science.json'
+};
+let glossaryContextCache = null;
 
-  const query = text.trim();
+function storageGet(area, keys) {
+  return new Promise((resolve) => area.get(keys, (items) => resolve(items || {})));
+}
 
-  // 1. Check persistent cache
-  const cached = await getCachedTranslation(query);
-  if (cached) {
-    return {
-      success: true,
-      translation: cached,
-      source: 'PaperDict 本地缓存',
-      query
-    };
-  }
+async function getTranslationConfig() {
+  const [syncSettings, localSettings] = await Promise.all([
+    storageGet(chrome.storage.sync, ['onlineFallback', 'customEngine', 'customApiEndpoint', 'customModel', 'customApiKey']),
+    storageGet(chrome.storage.local, ['customApiKey', 'glossaryVersion'])
+  ]);
 
-  // 2. Check if user configured custom API (OpenAI / DeepL)
-  const userSettings = await new Promise((resolve) => {
-    chrome.storage.sync.get(['customEngine', 'customApiKey', 'customApiEndpoint', 'customModel'], (items) => {
-      resolve(items || {});
-    });
-  });
-
-  if (userSettings.customEngine === 'openai' && userSettings.customApiKey) {
-    try {
-      const customRes = await tryOpenAITranslate(
-        query,
-        userSettings.customApiKey,
-        userSettings.customApiEndpoint,
-        userSettings.customModel
-      );
-      if (customRes) {
-        await setCachedTranslation(query, customRes.translation);
-        return customRes;
-      }
-    } catch (err) {
-      console.warn('Custom OpenAI translation failed, falling back to public engine:', err);
-    }
-  } else if (userSettings.customEngine === 'deepl' && userSettings.customApiKey) {
-    try {
-      const deeplRes = await tryDeepLTranslate(query, userSettings.customApiKey, userSettings.customApiEndpoint);
-      if (deeplRes) {
-        await setCachedTranslation(query, deeplRes.translation);
-        return deeplRes;
-      }
-    } catch (err) {
-      console.warn('Custom DeepL translation failed, falling back to public engine:', err);
-    }
-  }
-
-  // 3. Fallback to free public engines
-  const hasFormulaToken = query.includes('PDMATH_');
-  const isLongParagraph = query.length > 200 || hasFormulaToken;
-
-  if (isLongParagraph) {
-    const gtxResult = await tryGoogleTranslate(query);
-    if (gtxResult) {
-      await setCachedTranslation(query, gtxResult.translation);
-      return gtxResult;
-    }
-  }
-
-  // Try Engine 1: MyMemory Translation API
-  try {
-    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(query)}&langpair=en|zh-CN`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.responseData && data.responseData.translatedText) {
-        const result = data.responseData.translatedText;
-        if (result && !result.startsWith('MYMEMORY WARNING')) {
-          await setCachedTranslation(query, result);
-          return {
-            success: true,
-            translation: result,
-            source: 'MyMemory 在线翻译',
-            query
-          };
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('MyMemory engine failed, trying fallback:', e);
-  }
-
-  // Try Engine 2: Google Translate GTX endpoint
-  if (!isLongParagraph) {
-    const gtxResult = await tryGoogleTranslate(query);
-    if (gtxResult) {
-      await setCachedTranslation(query, gtxResult.translation);
-      return gtxResult;
-    }
-  }
-
-  // Try Engine 3: Lingva public instance fallback
-  try {
-    const lUrl = `https://lingva.ml/api/v1/en/zh/${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-    const res = await fetch(lUrl, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.translation) {
-        await setCachedTranslation(query, data.translation);
-        return {
-          success: true,
-          translation: data.translation,
-          source: '在线翻译',
-          query
-        };
-      }
-    }
-  } catch (e) {
-    console.warn('Lingva engine failed:', e);
+  let apiKey = localSettings.customApiKey || syncSettings.customApiKey || '';
+  if (!localSettings.customApiKey && syncSettings.customApiKey) {
+    await chrome.storage.local.set({ customApiKey: syncSettings.customApiKey });
+    await chrome.storage.sync.remove('customApiKey');
   }
 
   return {
-    success: false,
-    error: '网络暂不可用或无法连接翻译引擎，请稍后重试',
-    query
+    onlineFallback: syncSettings.onlineFallback !== false,
+    engine: syncSettings.customEngine || 'default',
+    endpoint: syncSettings.customApiEndpoint || '',
+    model: syncSettings.customModel || '',
+    apiKey,
+    glossaryVersion: Number(localSettings.glossaryVersion) || 0
   };
 }
 
-async function tryGoogleTranslate(query) {
-  try {
-    const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+async function loadGlossaryContext() {
+  const localSettings = await storageGet(chrome.storage.local, [
+    'userGlossary',
+    'enabledGlossaryPacks',
+    'glossaryVersion'
+  ]);
+  const enabledPacks = Array.isArray(localSettings.enabledGlossaryPacks)
+    ? localSettings.enabledGlossaryPacks
+    : ['general-academic'];
+  const version = Number(localSettings.glossaryVersion) || 0;
+  const cacheKey = JSON.stringify([version, enabledPacks]);
+  if (glossaryContextCache && glossaryContextCache.key === cacheKey) return glossaryContextCache;
 
-    const res = await fetch(gUrl, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && Array.isArray(data[0])) {
-        const trans = data[0].map((item) => item[0]).join('');
-        if (trans) {
-          return {
-            success: true,
-            translation: trans,
-            source: 'Google 在线翻译',
-            query
-          };
-        }
+  const entries = [];
+  for (const packId of enabledPacks) {
+    const file = GLOSSARY_PACK_FILES[packId];
+    if (!file) continue;
+    try {
+      const response = await fetch(chrome.runtime.getURL(file));
+      if (!response.ok) continue;
+      const pack = await response.json();
+      const priority = packId === 'general-academic' ? 10 : 20;
+      for (const term of pack.terms || []) {
+        entries.push(Object.assign({}, term, { priority, sourceType: packId }));
       }
+    } catch (error) {
+      console.warn(`Unable to load glossary pack ${packId}:`, error);
     }
-  } catch (e) {
-    console.warn('Google Translate engine failed:', e);
   }
-  return null;
+
+  for (const term of Array.isArray(localSettings.userGlossary) ? localSettings.userGlossary : []) {
+    entries.push(Object.assign({}, term, { priority: 100, sourceType: 'user' }));
+  }
+
+  glossaryContextCache = {
+    key: cacheKey,
+    version,
+    service: new GlossaryService(entries)
+  };
+  return glossaryContextCache;
 }
 
-// Custom OpenAI-compatible Translation (DeepSeek, Kimi, GLM, OpenAI, etc.)
-async function tryOpenAITranslate(query, apiKey, customEndpoint, customModel) {
-  const endpoint = customEndpoint || 'https://api.openai.com/v1/chat/completions';
-  const model = customModel || 'gpt-4o-mini';
-
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are an expert academic translator. Translate the following English scientific text into fluent, professional Simplified Chinese. Preserve any PDMATH_ tokens exactly without alteration. Output ONLY the translated text without commentary.'
-        },
-        { role: 'user', content: query }
-      ],
-      temperature: 0.2
-    })
-  });
-
-  if (res.ok) {
-    const data = await res.json();
-    const translated = data?.choices?.[0]?.message?.content?.trim();
-    if (translated) {
-      return {
-        success: true,
-        translation: translated,
-        source: `AI 模型 (${model})`,
-        query
-      };
-    }
-  }
-  return null;
+async function lookupGlossary(text) {
+  const context = await loadGlossaryContext();
+  const entry = context.service.lookup(text);
+  if (!entry) return { success: true, found: false };
+  return {
+    success: true,
+    found: true,
+    query: String(text || '').trim(),
+    translation: entry.target,
+    sourceType: entry.sourceType,
+    source: entry.sourceType === 'user' ? '用户术语库' : '内置学术术语包'
+  };
 }
 
-// Custom DeepL Translation
-async function tryDeepLTranslate(query, apiKey, customEndpoint) {
-  const isFree = apiKey.endsWith(':fx');
-  const defaultEndpoint = isFree ? 'https://api-free.deepl.com/v2/translate' : 'https://api.deepl.com/v2/translate';
-  const endpoint = customEndpoint || defaultEndpoint;
-
-  const body = new URLSearchParams({
-    auth_key: apiKey,
-    text: query,
-    target_lang: 'ZH'
+async function testTranslationEngine(config) {
+  return translationService.translate('This is an academic translation connection test.', {
+    engine: config.engine || 'default',
+    endpoint: config.endpoint || '',
+    model: config.model || '',
+    apiKey: config.apiKey || ''
   });
+}
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString()
-  });
-
-  if (res.ok) {
-    const data = await res.json();
-    const translated = data?.translations?.[0]?.text;
-    if (translated) {
-      return {
-        success: true,
-        translation: translated,
-        source: 'DeepL 学术翻译',
-        query
-      };
-    }
+async function handleOnlineTranslation(text) {
+  if (!text || !text.trim()) {
+    return { success: false, code: 'INVALID_CONFIG', error: '输入文本为空' };
   }
-  return null;
+
+  const query = text.trim();
+  const config = await getTranslationConfig();
+  if (!paperDictShouldRequestOnline(config)) {
+    return {
+      success: false,
+      code: 'ONLINE_DISABLED',
+      error: '整句和整页翻译需要在线引擎，请在设置中开启在线翻译',
+      engine: config.engine
+    };
+  }
+
+  const glossary = await loadGlossaryContext();
+  config.glossaryVersion = glossary.version;
+  const cacheKey = paperDictBuildCacheKey(query, config);
+
+  const cached = await getCachedTranslation(cacheKey);
+  if (cached) {
+    return {
+      success: true,
+      translation: cached.translation,
+      source: `${cached.source || '在线翻译'}（缓存）`,
+      engine: cached.engine || config.engine,
+      query,
+      cached: true
+    };
+  }
+
+  const protectedTerms = glossary.service.protect(query);
+  const result = await translationService.translate(protectedTerms.text, config);
+  if (!result.success) return Object.assign({}, result, { query });
+
+  const finalResult = Object.assign({}, result, {
+    translation: glossary.service.restore(result.translation, protectedTerms.terms),
+    query
+  });
+  await setCachedTranslation(cacheKey, finalResult);
+  return finalResult;
 }
