@@ -309,7 +309,7 @@ test('academic filtering preserves prose divs with one inline link', () => withA
     'The full experiment protocol appears in the supplementary methods and supports this conclusion.',
     { role: 'paragraph' }
   );
-  paragraph.appendChild(createAcademicElement('A', 'supplementary methods'));
+  paragraph.appendChild(createAcademicElement('A', 'supplementary methods', { role: 'link' }));
 
   assert.equal(filter.isCandidateTag(paragraph), true);
   assert.equal(filter.isEligible(paragraph), true);
@@ -411,6 +411,55 @@ test('academic filtering rejects interactive and landmark ARIA roles on self or 
   }
 }));
 
+test('academic filtering explicitly rejects missing WAI-ARIA widget and composite roles', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const selfMenuItemCheckbox = createAcademicElement(
+    'DIV',
+    'This eligible-looking menu item checkbox is a custom control rather than article prose.',
+    { role: 'menuitemcheckbox' }
+  );
+  const selfSearchbox = createAcademicElement(
+    'DIV',
+    'This eligible-looking search box is a custom control rather than article prose.',
+    { role: 'searchbox' }
+  );
+  const selfTreegrid = createAcademicElement(
+    'DIV',
+    'This eligible-looking tree grid is an interactive composite rather than article prose.',
+    { role: 'treegrid' }
+  );
+  const selfMeter = createAcademicElement(
+    'DIV',
+    'This eligible-looking meter reports interface state rather than article prose.',
+    { role: 'meter' }
+  );
+  const menuItemRadioAncestor = createAcademicElement('SECTION', '', { role: 'menuitemradio' });
+  const nestedUnderMenuItemRadio = menuItemRadioAncestor.appendChild(createAcademicElement(
+    'DIV',
+    'This semantic paragraph is nested below a custom menu item radio control.',
+    { role: 'paragraph' }
+  ));
+  const radioGroupAncestor = createAcademicElement('SECTION', '', { role: 'radiogroup' });
+  const nestedUnderRadioGroup = radioGroupAncestor.appendChild(createAcademicElement(
+    'DIV',
+    'This semantic paragraph is nested below a custom radio group control.',
+    { role: 'paragraph' }
+  ));
+
+  assert.equal(filter.isCandidateTag(selfMenuItemCheckbox), true);
+  assert.equal(filter.isEligible(selfMenuItemCheckbox), false, 'menuitemcheckbox on self');
+  assert.equal(filter.isCandidateTag(nestedUnderMenuItemRadio), true);
+  assert.equal(filter.isEligible(nestedUnderMenuItemRadio), false, 'menuitemradio on ancestor');
+  assert.equal(filter.isCandidateTag(selfSearchbox), true);
+  assert.equal(filter.isEligible(selfSearchbox), false, 'searchbox on self');
+  assert.equal(filter.isCandidateTag(nestedUnderRadioGroup), true);
+  assert.equal(filter.isEligible(nestedUnderRadioGroup), false, 'radiogroup on ancestor');
+  assert.equal(filter.isCandidateTag(selfTreegrid), true);
+  assert.equal(filter.isEligible(selfTreegrid), false, 'treegrid on self');
+  assert.equal(filter.isCandidateTag(selfMeter), true);
+  assert.equal(filter.isEligible(selfMeter), false, 'meter on self');
+}));
+
 test('semantic divs reject descendant custom ARIA controls', () => withAcademicDom(() => {
   const filter = new AcademicFilter();
   const paragraph = createAcademicElement(
@@ -418,7 +467,7 @@ test('semantic divs reject descendant custom ARIA controls', () => withAcademicD
     'This semantic paragraph includes a custom setting control and must not be translated.',
     { role: 'paragraph' }
   );
-  paragraph.appendChild(createAcademicElement('SPAN', 'Enable results', { role: 'switch' }));
+  paragraph.appendChild(createAcademicElement('SPAN', 'Enable result', { role: 'menuitemcheckbox' }));
 
   assert.equal(filter.isSemanticParagraphDiv(paragraph), false);
   assert.equal(filter.isEligible(paragraph), false);

@@ -13,6 +13,21 @@
       ? require('./dict_service.js').isEnglishSourceText
       : () => false);
 
+  // Explicit WAI-ARIA widgets, composites, and non-content landmarks are never paragraph sources.
+  const EXCLUDED_ARIA_ROLES = new Set([
+    'alertdialog', 'application', 'banner', 'button', 'checkbox', 'columnheader',
+    'combobox', 'complementary', 'contentinfo', 'dialog', 'form', 'grid', 'gridcell',
+    'link', 'listbox', 'menu', 'menubar', 'menuitem', 'menuitemcheckbox',
+    'menuitemradio', 'meter', 'navigation', 'option', 'progressbar', 'radio',
+    'radiogroup', 'row', 'rowgroup', 'rowheader', 'scrollbar', 'search', 'searchbox',
+    'separator', 'slider', 'spinbutton', 'switch', 'tab', 'tablist', 'textbox',
+    'toolbar', 'tooltip', 'tree', 'treegrid', 'treeitem'
+  ]);
+  // Descendant links remain eligible here; isLinkDense distinguishes prose links from navigation.
+  const EXCLUDED_DESCENDANT_ARIA_ROLES = new Set(
+    Array.from(EXCLUDED_ARIA_ROLES).filter((role) => role !== 'link')
+  );
+
   /**
    * 1. Formula & Structure Protection (FormulaProtector)
    * Prevents translation engines from garbling math formulas, LaTeX tokens, and MathML.
@@ -202,13 +217,6 @@
       this.excludedClassIdRegex = /(reference|bibliography|biblio|ref-list|footnote|author-notes|header|navbar|sidebar|footer|menu|comment|pager|pagination|disclaimer|copyright|doi-box)/i;
       this.mathClassIdRegex = /(?:^|[\s_-])(?:formula|math|mathjax|katex|mjx-container)(?:$|[\s_-])/i;
       this.semanticDivHintRegex = /(?:^|[\s_-])(?:paragraph|para|prose|abstract|article[-_]?text|body[-_]?text)(?:$|[\s_-])/i;
-      this.excludedRoles = new Set([
-        'button', 'link', 'checkbox', 'radio', 'switch', 'textbox', 'combobox',
-        'listbox', 'option', 'slider', 'spinbutton', 'progressbar', 'scrollbar',
-        'tree', 'treeitem', 'grid', 'gridcell', 'row', 'rowgroup', 'application',
-        'navigation', 'menu', 'menuitem', 'toolbar', 'tab', 'tablist', 'dialog',
-        'search', 'form', 'banner', 'contentinfo', 'complementary'
-      ]);
       this.blockCandidateTags = new Set([
         'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'LI'
       ]);
@@ -218,10 +226,10 @@
       return this.refHeadingRegex.test(String(text || '').trim());
     }
 
-    hasExcludedRole(el) {
+    hasExcludedRole(el, excludedRoles = EXCLUDED_ARIA_ROLES) {
       if (!el || typeof el.getAttribute !== 'function') return false;
       const roles = String(el.getAttribute('role') || '').toLowerCase().split(/\s+/).filter(Boolean);
-      return roles.some((role) => this.excludedRoles.has(role));
+      return roles.some((role) => excludedRoles.has(role));
     }
 
     isCssHidden(el) {
@@ -348,7 +356,7 @@
 
       if (typeof el.querySelectorAll !== 'function') return false;
       return Array.from(el.querySelectorAll('[role]')).some((descendant) => {
-        return this.hasExcludedRole(descendant);
+        return this.hasExcludedRole(descendant, EXCLUDED_DESCENDANT_ARIA_ROLES);
       });
     }
 
