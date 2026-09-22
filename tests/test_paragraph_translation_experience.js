@@ -159,11 +159,75 @@ test('range anchor disposal detaches the cloned range when supported', () => {
 });
 
 const {
+  FormulaProtector,
   AcademicFilter,
   PaperBilingualManager,
   getAriaRoleTokens,
   isLinkElement
 } = require('../extension/bilingual.js');
+
+test('formula restoration escapes provider markup before restoring safe formula spans', () => {
+  const protector = new FormulaProtector();
+  const malicious = '<img src=x onerror="globalThis.pwned=1"><script>alert(1)</script>' +
+    '<iframe srcdoc="bad"></iframe><a href="javascript:alert(2)">link</a>';
+
+  const restored = protector.restore(malicious, new Map());
+
+  assert.equal(restored.includes('<img'), false);
+  assert.equal(restored.includes('<script'), false);
+  assert.equal(restored.includes('<iframe'), false);
+  assert.equal(restored.includes('<a href'), false);
+  assert.match(restored, /&lt;img src=x onerror=&quot;globalThis\.pwned=1&quot;&gt;/);
+  assert.match(restored, /&lt;a href=&quot;javascript:alert\(2\)&quot;&gt;link&lt;\/a&gt;/);
+});
+
+test('DOM formula restoration preserves text but drops source markup and attributes', () => {
+  const previousHTMLElement = global.HTMLElement;
+  const previousDocument = global.document;
+  class FakeHTMLElement {}
+  try {
+    global.HTMLElement = FakeHTMLElement;
+    const clone = {
+      innerText: '',
+      textContent: '',
+      querySelectorAll: () => []
+    };
+    const formulaNode = {
+      outerHTML: '<math onmouseover="globalThis.pwned=1"><mi data-secret="x">a &lt; b</mi></math>',
+      textContent: 'a < b',
+      parentNode: {
+        replaceChild(placeholder) {
+          clone.innerText = placeholder.textContent;
+          clone.textContent = placeholder.textContent;
+        }
+      }
+    };
+    clone.querySelectorAll = () => [formulaNode];
+    const source = new FakeHTMLElement();
+    source.cloneNode = () => clone;
+    global.document = {
+      createTextNode: (text) => ({ textContent: text })
+    };
+    const protector = new FormulaProtector();
+
+    const protectedFormula = protector.protect(source);
+    const restored = protector.restore(
+      `<img onerror="bad">before ${protectedFormula.protectedText} after`,
+      protectedFormula.tokenMap
+    );
+
+    assert.match(restored, /&lt;img onerror=&quot;bad&quot;&gt;before/);
+    assert.match(restored, /<span class="pd-math-formula">a &lt; b<\/span>/);
+    assert.equal(restored.includes('<math'), false);
+    assert.equal(restored.includes('onmouseover'), false);
+    assert.equal(restored.includes('data-secret'), false);
+  } finally {
+    if (previousHTMLElement === undefined) delete global.HTMLElement;
+    else global.HTMLElement = previousHTMLElement;
+    if (previousDocument === undefined) delete global.document;
+    else global.document = previousDocument;
+  }
+});
 
 function createAcademicClassList(className = '') {
   const values = new Set(String(className).split(/\s+/).filter(Boolean));
@@ -972,9 +1036,11 @@ function createMutableClassList(element, initial = '') {
 
 function createTranslationViewNode(className = '') {
   const customProperties = new Map();
+  const attributes = new Map();
   const node = {
     _className: '',
     innerHTML: '',
+    children: [],
     style: {
       display: '',
       setProperty(name, value) { customProperties.set(name, value); },
@@ -983,6 +1049,9 @@ function createTranslationViewNode(className = '') {
     parentNode: null,
     removed: false,
     retryButton: null,
+    setAttribute(name, value) { attributes.set(name, String(value)); },
+    getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
+    removeAttribute(name) { attributes.delete(name); },
     querySelector(selector) {
       if (selector !== '.pd-translation-retry' || !this.innerHTML.includes('pd-translation-retry')) {
         return null;
@@ -1230,6 +1299,9 @@ test('failed paragraphs enter error state, keep processing, and retry only on co
     const secondInfo = manager.elementStateMap.get(second.source);
     assert.equal(firstInfo.state, 'error');
     assert.equal(firstInfo.transEl.classList.contains('pd-bilingual-error'), true);
+    assert.equal(firstInfo.transEl.getAttribute('role'), 'alert');
+    assert.equal(firstInfo.transEl.getAttribute('aria-live'), 'assertive');
+    assert.match(firstInfo.transEl.innerHTML, /<button type="button" class="pd-translation-retry">/);
     assert.equal(first.source.classList.contains('pd-orig-hidden'), false);
     assert.equal(secondInfo.state, 'done');
     assert.equal(second.source.classList.contains('pd-orig-hidden'), true);
@@ -1302,6 +1374,8 @@ test('loading placeholder reuses an existing generated error node', () => {
     assert.equal(errorNode.className, 'pd-bilingual-loading');
     assert.match(errorNode.innerHTML, /pd-loading-spinner/);
     assert.equal(errorNode.style.display, 'block');
+    assert.equal(errorNode.getAttribute('role'), 'status');
+    assert.equal(errorNode.getAttribute('aria-live'), 'polite');
     assert.equal(source.classList.contains('pd-orig-hidden'), false);
     assert.equal(container.children.filter((node) => node !== source).length, 1);
   });
@@ -1377,6 +1451,64 @@ test('mode switching reuses one completed translation block and one label', () =
   });
 });
 
+test('same Chinese mode refresh preserves a CSS-hidden completed source for later invalidation', () => {
+  return withAcademicDom(async ({ body, documentElement }) => {
+    const previousGetComputedStyle = global.window.getComputedStyle;
+    const paragraph = body.appendChild(createAcademicElement(
+      'P',
+      'This completed academic paragraph remains tracked while Chinese mode hides its source.'
+    ));
+    paragraph.classList = createMutableClassList(paragraph);
+    paragraph.parentNode = body;
+    const translationNode = createTranslationViewNode('pd-bilingual-trans');
+    translationNode.parentNode = body;
+    body.children.push(translationNode);
+    global.window.getComputedStyle = (element) => ({
+      display: element === paragraph && element.classList.contains('pd-orig-hidden') ? 'none' : 'block',
+      visibility: 'visible',
+      fontFamily: 'Arial',
+      fontSize: '16px',
+      fontWeight: '400',
+      lineHeight: '24px',
+      fontStyle: 'normal',
+      textAlign: 'left'
+    });
+    global.document.querySelector = () => null;
+    global.document.createElement = () => createTranslationViewNode();
+    global.document.documentElement = documentElement;
+    const manager = new PaperBilingualManager();
+    manager.mode = 'chinese';
+    manager.pageModeActive = true;
+    manager.showToast = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.processQueue = () => {};
+    manager.elements = [paragraph];
+    manager.registeredElements.add(paragraph);
+    manager.trackedElements.add(paragraph);
+    manager.elementStateMap.set(paragraph, {
+      state: 'done',
+      transEl: translationNode,
+      requestId: 1,
+      requestGeneration: 0,
+      requestEntry: null
+    });
+    paragraph.classList.add('pd-orig-hidden');
+
+    manager.setMode('chinese');
+
+    assert.deepEqual(manager.elements, [paragraph]);
+    assert.equal(manager.elementStateMap.get(paragraph).state, 'done');
+    assert.equal(paragraph.classList.contains('pd-orig-hidden'), true);
+
+    manager.invalidateTranslationConfig();
+    const info = manager.elementStateMap.get(paragraph);
+    assert.equal(info.state, 'queued');
+    assert.equal(info.transEl.classList.contains('pd-bilingual-loading'), true);
+    assert.equal(paragraph.classList.contains('pd-orig-hidden'), false);
+    global.window.getComputedStyle = previousGetComputedStyle;
+  });
+});
+
 test('original mode removes done, error, and loading nodes and resets their state', () => {
   const manager = new PaperBilingualManager();
   manager.mode = 'original';
@@ -1411,6 +1543,26 @@ test('original mode removes done, error, and loading nodes and resets their stat
     assert.equal(info.transEl, null, states[index]);
     assert.equal(source.classList.contains('pd-orig-hidden'), false, states[index]);
   });
+});
+
+test('original cleanup leaves host nodes that merely share PaperDict class names', () => {
+  const previousDocument = global.document;
+  try {
+    const hostNode = createTranslationViewNode('pd-bilingual-trans');
+    global.document = {
+      querySelectorAll: () => [hostNode]
+    };
+    const manager = new PaperBilingualManager();
+    manager.mode = 'original';
+    manager.updateCapsuleStats = () => {};
+
+    manager.restoreOriginalView();
+
+    assert.equal(hostNode.removed, false);
+  } finally {
+    if (previousDocument === undefined) delete global.document;
+    else global.document = previousDocument;
+  }
 });
 
 test('original mode resets a completed source omitted by a later rescan', () => {
@@ -1843,6 +1995,63 @@ test('original mode invalidates a deferred request and permits a clean re-entry'
     assert.deepEqual(renders, [{ element: paragraph, translation: 'fresh re-entry response' }]);
     assert.equal(info.state, 'done');
     assert.equal(manager.cache.get(paragraph.innerText), 'fresh re-entry response');
+  });
+});
+
+test('immediate re-entry adopts the old in-flight request without occupying a new-view slot', () => {
+  return withSchedulingDom({}, async ({ body }) => {
+    const paragraph = body.appendChild(makeSchedulingElement());
+    const deferred = createDeferred();
+    const requests = [];
+    const renders = [];
+    const manager = new PaperBilingualManager();
+    manager.maxConcurrency = 1;
+    manager.filter = {
+      findContentElements: () => [paragraph],
+      isEligible: () => true
+    };
+    manager.formulaProtector = {
+      protect: (element) => ({
+        protectedText: (element.innerText || element.textContent || '').trim(),
+        tokenMap: new Map()
+      }),
+      restore: (translation) => translation,
+      escapeHtml: (value) => value
+    };
+    manager.renderLoadingPlaceholder = (element, info) => {
+      info.transEl = createTranslationNodeDouble();
+    };
+    manager.requestTranslation = (text) => {
+      requests.push(text);
+      return deferred.promise;
+    };
+    manager.renderTranslation = (element, info, translation) => {
+      renders.push({ element, translation });
+    };
+    manager.applyDisplayModeToAll = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.showToast = () => {};
+
+    manager.setMode('bilingual');
+    assert.equal(requests.length, 1);
+    assert.equal(manager.activeRequests, 1);
+
+    manager.setMode('original');
+    assert.equal(manager.activeRequests, 0);
+    manager.setMode('bilingual');
+
+    const info = manager.elementStateMap.get(paragraph);
+    assert.equal(requests.length, 1, 're-entry should lease the existing provider request');
+    assert.equal(info.state, 'translating');
+    assert.equal(manager.activeRequests, 1);
+
+    deferred.resolve({ success: true, translation: 'adopted response' });
+    await flushSchedulingPromises();
+
+    assert.deepEqual(renders, [{ element: paragraph, translation: 'adopted response' }]);
+    assert.equal(info.state, 'done');
+    assert.equal(manager.activeRequests, 0);
+    assert.equal(manager.inFlightTranslations.size, 0);
   });
 });
 
