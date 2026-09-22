@@ -194,11 +194,17 @@
       this.excludedTags = new Set([
         'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT', 'SELECT',
         'BUTTON', 'SVG', 'CANVAS', 'PRE', 'CODE', 'NAV', 'HEADER',
-        'FOOTER', 'ASIDE', 'PAPER-DICT-HOST', 'PAPERDICT-BILINGUAL-CAPSULE-HOST'
+        'FOOTER', 'ASIDE', 'FORM', 'OPTION', 'LABEL', 'AUDIO', 'VIDEO',
+        'IFRAME', 'MATH', 'PAPER-DICT-HOST', 'PAPERDICT-BILINGUAL-CAPSULE-HOST'
       ]);
 
       this.refHeadingRegex = /^\s*(?:(?:\[\d+\]|[0-9]+|[IVXLCDM]+)[\.\s\-]*)?(?:references|bibliography|works\s+cited|literature\s+cited|citations)(?:\s*(?:and|&)\s*(?:notes|sources|citations|references|further\s+reading))?\s*[:\.]?\s*$/i;
       this.excludedClassIdRegex = /(reference|bibliography|biblio|ref-list|footnote|author-notes|header|navbar|sidebar|footer|menu|comment|pager|pagination|disclaimer|copyright|doi-box)/i;
+      this.mathClassIdRegex = /(?:^|[\s_-])(?:formula|math|mathjax|katex|mjx-container)(?:$|[\s_-])/i;
+      this.semanticDivHintRegex = /(?:^|[\s_-])(?:paragraph|para|prose|abstract|article[-_]?text|body[-_]?text)(?:$|[\s_-])/i;
+      this.blockCandidateTags = new Set([
+        'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'LI'
+      ]);
     }
 
     isReferenceHeading(text) {
@@ -229,14 +235,35 @@
         const tag = cur.tagName ? cur.tagName.toUpperCase() : '';
         if (this.excludedTags.has(tag)) return true;
 
+        if (cur.classList && (
+          cur.classList.contains('pd-bilingual-trans') ||
+          cur.classList.contains('pd-bilingual-loading') ||
+          cur.classList.contains('pd-mode-toast')
+        )) {
+          return true;
+        }
+
         const id = cur.id || '';
         const className = typeof cur.className === 'string'
           ? cur.className
           : (cur.getAttribute ? cur.getAttribute('class') || '' : '');
 
-        if (this.excludedClassIdRegex.test(id) || this.excludedClassIdRegex.test(className)) {
+        if (
+          this.excludedClassIdRegex.test(id) ||
+          this.excludedClassIdRegex.test(className) ||
+          this.mathClassIdRegex.test(id) ||
+          this.mathClassIdRegex.test(className)
+        ) {
           return true;
         }
+
+        if (cur.getAttribute) {
+          const contentEditable = cur.getAttribute('contenteditable');
+          if (contentEditable !== null && contentEditable !== 'false') return true;
+          if (cur.getAttribute('aria-hidden') === 'true') return true;
+        }
+
+        if (cur.hidden === true) return true;
 
         // Check if marked as reference container
         if (cur.dataset && cur.dataset.pdExclude === 'true') {
@@ -249,6 +276,54 @@
       return false;
     }
 
+    hasSemanticDivHint(el) {
+      if (!el || String(el.tagName || '').toUpperCase() !== 'DIV') return false;
+      const role = el.getAttribute ? el.getAttribute('role') : null;
+      const className = typeof el.className === 'string'
+        ? el.className
+        : (el.getAttribute ? el.getAttribute('class') || '' : '');
+      return role === 'paragraph' || this.semanticDivHintRegex.test(`${el.id || ''} ${className}`);
+    }
+
+    hasInteractiveDescendant(el) {
+      if (!el || typeof el.querySelector !== 'function') return false;
+      return Boolean(el.querySelector([
+        'button', 'input', 'textarea', 'select', 'form', 'option', 'label',
+        'audio', 'video', 'iframe', '[contenteditable]:not([contenteditable="false"])',
+        'pre', 'code', 'math', 'script', 'style', 'noscript',
+        '.pd-bilingual-trans', '.pd-bilingual-loading', '.pd-mode-toast',
+        'paper-dict-host', 'paperdict-bilingual-capsule-host'
+      ].join(', ')));
+    }
+
+    hasNestedCandidateBlock(el) {
+      if (!el || typeof el.querySelectorAll !== 'function') return false;
+      const descendants = el.querySelectorAll('p, h1, h2, h3, h4, h5, h6, blockquote, li, div');
+      for (const descendant of descendants) {
+        const tag = String(descendant && descendant.tagName || '').toUpperCase();
+        if (this.blockCandidateTags.has(tag)) return true;
+        if (tag === 'DIV') {
+          const text = (descendant.innerText || descendant.textContent || '').trim();
+          if ((this.hasSemanticDivHint(descendant) && text.length >= 15) || text.length >= 40) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    isSemanticParagraphDiv(el) {
+      if (!el || String(el.tagName || '').toUpperCase() !== 'DIV') return false;
+      if (this.hasInteractiveDescendant(el) || this.hasNestedCandidateBlock(el)) return false;
+      const text = (el.innerText || el.textContent || '').trim();
+      return this.hasSemanticDivHint(el) || text.length >= 40;
+    }
+
+    isCandidateTag(el) {
+      const tag = String(el && el.tagName || '').toUpperCase();
+      return this.blockCandidateTags.has(tag) || (tag === 'DIV' && this.isSemanticParagraphDiv(el));
+    }
+
     /**
      * Validates if a block element is eligible for translation
      */
@@ -256,9 +331,7 @@
       if (!el || !el.tagName) return false;
       const tag = el.tagName.toUpperCase();
 
-      // Check allowed block tags
-      const isAllowedTag = ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'LI'].includes(tag);
-      if (!isAllowedTag) return false;
+      if (!this.isCandidateTag(el)) return false;
 
       if (this.isExcluded(el)) return false;
 
@@ -310,7 +383,7 @@
      */
     findContentElements(root = document) {
       const container = this.findArticleContainer(root);
-      const candidates = container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, blockquote, li');
+      const candidates = container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, blockquote, li, div');
 
       const eligible = [];
       let inReferenceSection = false;

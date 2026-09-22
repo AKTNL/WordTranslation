@@ -158,6 +158,238 @@ test('range anchor disposal detaches the cloned range when supported', () => {
   assert.equal(anchor.getRect(300, 200), null);
 });
 
+const { AcademicFilter } = require('../extension/bilingual.js');
+
+function createAcademicClassList(className = '') {
+  const values = new Set(String(className).split(/\s+/).filter(Boolean));
+  return {
+    contains(name) { return values.has(name); }
+  };
+}
+
+function matchesAcademicSelector(element, selector) {
+  const simpleSelector = selector.trim();
+  const tagMatch = simpleSelector.match(/^[a-z0-9-]+/i);
+  if (tagMatch && element.tagName !== tagMatch[0].toUpperCase()) return false;
+
+  const classMatch = simpleSelector.match(/\.([a-z0-9_-]+)/i);
+  if (classMatch && !element.classList.contains(classMatch[1])) return false;
+
+  const attributeMatch = simpleSelector.match(/\[([\w-]+)(?:=["']?([^\]"']+)["']?)?\]/);
+  if (attributeMatch) {
+    const actual = element.getAttribute(attributeMatch[1]);
+    if (actual === null) return false;
+    if (attributeMatch[2] !== undefined && actual !== attributeMatch[2]) return false;
+  }
+
+  return Boolean(tagMatch || classMatch || attributeMatch);
+}
+
+function createAcademicElement(tagName, text, options = {}) {
+  const attributes = { ...(options.attributes || {}) };
+  if (options.role) attributes.role = options.role;
+  const element = {
+    tagName: String(tagName).toUpperCase(),
+    innerText: text,
+    textContent: text,
+    id: options.id || '',
+    className: options.className || '',
+    classList: createAcademicClassList(options.className),
+    dataset: options.dataset || {},
+    parentElement: options.parentElement || null,
+    children: [],
+    offsetParent: options.hidden ? null : {},
+    offsetHeight: options.hidden ? 0 : 40,
+    offsetWidth: options.hidden ? 0 : 400,
+    getAttribute(name) {
+      if (name === 'class') return this.className || null;
+      if (name === 'id') return this.id || null;
+      return Object.prototype.hasOwnProperty.call(attributes, name) ? attributes[name] : null;
+    },
+    appendChild(child) {
+      child.parentElement = this;
+      this.children.push(child);
+      return child;
+    },
+    querySelectorAll(selector) {
+      const selectors = String(selector).split(',');
+      const descendants = [];
+      const visit = (node) => {
+        for (const child of node.children) {
+          if (selectors.some((item) => matchesAcademicSelector(child, item))) descendants.push(child);
+          visit(child);
+        }
+      };
+      visit(this);
+      return descendants;
+    },
+    querySelector(selector) {
+      return this.querySelectorAll(selector)[0] || null;
+    }
+  };
+  return element;
+}
+
+function withAcademicDom(run) {
+  const previousDocument = global.document;
+  const previousWindow = global.window;
+  const body = createAcademicElement('BODY', '');
+  const documentElement = createAcademicElement('HTML', '');
+  global.document = { body, documentElement };
+  global.window = {};
+  try {
+    return run({ body, documentElement });
+  } finally {
+    if (previousDocument === undefined) delete global.document;
+    else global.document = previousDocument;
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+  }
+}
+
+test('academic filtering preserves legacy blocks and inline links', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const paragraph = createAcademicElement(
+    'P',
+    'This paragraph keeps its inline citation link while remaining translatable.'
+  );
+  paragraph.appendChild(createAcademicElement('A', 'supporting citation'));
+
+  assert.equal(filter.isEligible(paragraph), true);
+  assert.equal(filter.isEligible(createAcademicElement('H2', 'Methods')), true);
+  assert.equal(filter.isEligible(createAcademicElement(
+    'BLOCKQUOTE',
+    'This quoted academic observation remains part of the article body.'
+  )), true);
+  assert.equal(filter.isEligible(createAcademicElement(
+    'LI',
+    'This list item reports a sufficiently detailed experimental result.'
+  )), true);
+}));
+
+test('academic filtering accepts semantic and sufficiently long leaf divs', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const roleParagraph = createAcademicElement(
+    'DIV',
+    'The estimate remains statistically significant.',
+    { role: 'paragraph' }
+  );
+  const classParagraph = createAcademicElement(
+    'DIV',
+    'Ablation results isolate the effect.',
+    { className: 'article-text' }
+  );
+  const idParagraph = createAcademicElement(
+    'DIV',
+    'The cohort retained complete follow-up data.',
+    { id: 'body-text-3' }
+  );
+  const longLeaf = createAcademicElement(
+    'DIV',
+    'This unhinted leaf block contains enough English prose to represent a complete academic paragraph.'
+  );
+
+  assert.equal(filter.isEligible(roleParagraph), true);
+  assert.equal(filter.isEligible(classParagraph), true);
+  assert.equal(filter.isEligible(idParagraph), true);
+  assert.equal(filter.isEligible(longLeaf), true);
+}));
+
+test('academic filtering rejects div containers and interactive descendants', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const parent = createAcademicElement(
+    'DIV',
+    'This parent repeats the complete body text exposed by a more specific child paragraph.',
+    { className: 'prose' }
+  );
+  parent.appendChild(createAcademicElement(
+    'P',
+    'This child paragraph is the specific translation candidate for the result.'
+  ));
+  const interactive = createAcademicElement(
+    'DIV',
+    'This prose block includes an interactive control and must not be translated.',
+    { role: 'paragraph' }
+  );
+  interactive.appendChild(createAcademicElement('BUTTON', 'Show details'));
+
+  assert.equal(filter.isEligible(parent), false);
+  assert.equal(filter.isEligible(interactive), false);
+}));
+
+test('academic filtering rejects excluded ancestors, generated nodes, code, and math', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const nav = createAcademicElement('NAV', '');
+  const navigationText = nav.appendChild(createAcademicElement(
+    'DIV',
+    'This navigation copy is deliberately long enough to resemble an article paragraph.'
+  ));
+  const generated = createAcademicElement(
+    'DIV',
+    'This generated translation must never become a translation source.',
+    { className: 'pd-bilingual-trans', role: 'paragraph' }
+  );
+  const code = createAcademicElement('CODE', 'const academicModel = true;');
+  const math = createAcademicElement('MATH', 'The formula x equals y plus z is represented here.');
+
+  assert.equal(filter.isEligible(navigationText), false);
+  assert.equal(filter.isEligible(generated), false);
+  assert.equal(filter.isEligible(code), false);
+  assert.equal(filter.isEligible(math), false);
+}));
+
+test('academic filtering enforces English, visibility, and short metadata constraints', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  assert.equal(filter.isEligible(createAcademicElement('DIV', 'Published 2026')), false);
+  assert.equal(filter.isEligible(createAcademicElement(
+    'DIV',
+    'This visible-looking metadata block is actually hidden from layout and must be skipped.',
+    { hidden: true }
+  )), false);
+  assert.equal(filter.isEligible(createAcademicElement(
+    'DIV',
+    'This mixed paragraph 包含中文 and therefore cannot enter English translation.',
+    { role: 'paragraph' }
+  )), false);
+  assert.equal(filter.isEligible(createAcademicElement(
+    'DIV',
+    '这是一段足够长但完全不是英语正文的中文内容，因此不能进入翻译队列。',
+    { role: 'paragraph' }
+  )), false);
+}));
+
+test('content discovery returns only leaf candidates and preserves reference boundaries', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const article = createAcademicElement('ARTICLE', '');
+  const parent = article.appendChild(createAcademicElement(
+    'DIV',
+    'This aggregate article container repeats the full text of its semantic paragraph child.',
+    { className: 'article-text' }
+  ));
+  const child = parent.appendChild(createAcademicElement(
+    'DIV',
+    'This unhinted leaf paragraph reports the primary result clearly in document order.'
+  ));
+  article.appendChild(createAcademicElement('H2', 'References'));
+  article.appendChild(createAcademicElement(
+    'DIV',
+    'This reference entry is long enough to look like prose but remains excluded.',
+    { role: 'paragraph' }
+  ));
+  const discussionHeading = article.appendChild(createAcademicElement('H2', 'Discussion'));
+  const discussion = article.appendChild(createAcademicElement(
+    'DIV',
+    'This later semantic paragraph remains eligible after the reference section ends.',
+    { className: 'body-text' }
+  ));
+  const root = {
+    body: article,
+    querySelector(selector) { return selector === 'article' ? article : null; }
+  };
+
+  assert.deepEqual(filter.findContentElements(root), [child, discussionHeading, discussion]);
+}));
+
 const contentJs = fs.readFileSync(path.join(__dirname, '../extension/content.js'), 'utf8');
 const manifest = JSON.parse(
   fs.readFileSync(path.join(__dirname, '../extension/manifest.json'), 'utf8')
