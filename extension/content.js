@@ -16,6 +16,11 @@
   if (window.__paper_dict_injected__) return;
   window.__paper_dict_injected__ = true;
 
+  const {
+    createRangeAnchor,
+    isSelectionNavigationKey
+  } = globalThis.PaperDictSelectionAnchor;
+
   // Default configuration
   let settings = {
     enabled: true,
@@ -75,6 +80,8 @@
   let pendingSelectionData = null;
   let isPinned = false;
   let currentWordData = null;
+  let activeSelectionAnchor = null;
+  let selectionPositionFrame = null;
 
   // Create isolated Shadow DOM
   function setupShadowDOM() {
@@ -502,15 +509,42 @@
     }
   }
 
+  function clearActiveSelectionAnchor() {
+    if (activeSelectionAnchor) {
+      activeSelectionAnchor.dispose();
+      activeSelectionAnchor = null;
+    }
+  }
+
+  function setActiveSelectionAnchor(range) {
+    clearActiveSelectionAnchor();
+    activeSelectionAnchor = createRangeAnchor(range);
+    return activeSelectionAnchor;
+  }
+
   function hideCard(force = false) {
     if (isPinned && !force) return;
+    clearActiveSelectionAnchor();
     if (cardEl) {
       cardEl.classList.remove('visible');
     }
   }
 
+  function getSelectionCardRect(fallbackRect, expectedAnchor = null) {
+    if (expectedAnchor && expectedAnchor !== activeSelectionAnchor) return null;
+    if (!activeSelectionAnchor) return expectedAnchor ? null : fallbackRect;
+
+    const rect = activeSelectionAnchor.getRect(window.innerWidth, window.innerHeight);
+    if (rect) return rect;
+
+    clearActiveSelectionAnchor();
+    hideTriggerIcon();
+    hideCard(true);
+    return null;
+  }
+
   function positionCard(rect) {
-    if (!cardEl) return;
+    if (!cardEl || !rect) return;
 
     const cardWidth = 320;
     const cardHeight = cardEl.offsetHeight || 180;
@@ -536,6 +570,30 @@
 
     cardEl.style.left = `${Math.round(left)}px`;
     cardEl.style.top = `${Math.round(top)}px`;
+  }
+
+  function scheduleSelectionCardPosition() {
+    if (selectionPositionFrame !== null) return;
+    selectionPositionFrame = window.requestAnimationFrame(() => {
+      selectionPositionFrame = null;
+      if (!activeSelectionAnchor) return;
+
+      const cardVisible = cardEl && cardEl.classList.contains('visible');
+      const triggerVisible = triggerIconEl && triggerIconEl.classList.contains('visible');
+      if (!cardVisible && !triggerVisible) return;
+
+      const rect = activeSelectionAnchor.getRect(window.innerWidth, window.innerHeight);
+      if (!rect) {
+        pendingSelectionData = null;
+        clearActiveSelectionAnchor();
+        hideCard(true);
+        hideTriggerIcon();
+        return;
+      }
+
+      if (cardVisible) positionCard(rect);
+      if (triggerVisible) showTriggerIcon(rect);
+    });
   }
 
   // Save word to Vocabulary Notebook in chrome.storage.local
@@ -592,7 +650,8 @@
   }
 
   // Render card content
-  function renderCard(data, rect) {
+  function renderCard(data, rect, expectedAnchor = null) {
+    if (expectedAnchor !== activeSelectionAnchor) return;
     setupShadowDOM();
     hideTriggerIcon();
 
@@ -747,7 +806,9 @@
     }
 
     // Position and show
-    positionCard(rect);
+    const cardRect = getSelectionCardRect(rect, expectedAnchor);
+    if (!cardRect) return;
+    positionCard(cardRect);
     cardEl.classList.add('visible');
 
     // Auto audio if enabled
@@ -770,6 +831,8 @@
     recordHistory(cleaned);
 
     const isSingleWord = dictService.isSingleWord(cleaned);
+    const expectedAnchor = activeSelectionAnchor;
+    const renderLookupCard = (data) => renderCard(data, rect, expectedAnchor);
 
     try {
       const glossaryResult = await chrome.runtime.sendMessage({
@@ -777,7 +840,7 @@
         text: cleaned
       });
       if (glossaryResult && glossaryResult.success && glossaryResult.found) {
-        renderCard({
+        renderLookupCard({
           title: cleaned,
           phonetic: '',
           definitions: isSingleWord ? [{ pos: '术语', text: glossaryResult.translation }] : [],
@@ -788,7 +851,7 @@
           sourceName: glossaryResult.source || '离线术语库',
           isSentence: !isSingleWord,
           loading: false
-        }, rect);
+        });
         return;
       }
     } catch (error) {
@@ -800,7 +863,7 @@
 
       if (localResult && localResult.found) {
         const definitions = dictService.parseDefinitions(localResult.translation);
-        renderCard({
+        renderLookupCard({
           title: cleaned,
           baseWord: localResult.baseWord,
           phonetic: localResult.phonetic,
@@ -812,14 +875,14 @@
           sourceName: '离线学术词典',
           isSentence: false,
           loading: false
-        }, rect);
+        });
         return;
       }
     }
 
     // Fallback to online translation if enabled
     if (settings.onlineFallback) {
-      renderCard({
+      renderLookupCard({
         title: cleaned.length > 32 ? cleaned.slice(0, 32) + '...' : cleaned,
         phonetic: '',
         definitions: [],
@@ -829,7 +892,7 @@
         sourceName: '在线翻译',
         isSentence: !isSingleWord,
         loading: true
-      }, rect);
+      });
 
       try {
         const response = await chrome.runtime.sendMessage({
@@ -838,7 +901,7 @@
         });
 
         if (response && response.success) {
-          renderCard({
+          renderLookupCard({
             title: cleaned.length > 32 ? cleaned.slice(0, 32) + '...' : cleaned,
             phonetic: '',
             translation: response.translation,
@@ -848,9 +911,9 @@
             sourceName: response.source || '在线翻译',
             isSentence: true,
             loading: false
-          }, rect);
+          });
         } else {
-          renderCard({
+          renderLookupCard({
             title: cleaned.length > 32 ? cleaned.slice(0, 32) + '...' : cleaned,
             translation: response?.error || '未查到对应释义',
             rawTrans: response?.error || '',
@@ -859,10 +922,10 @@
             sourceName: '查询失败',
             isSentence: true,
             loading: false
-          }, rect);
+          });
         }
       } catch (err) {
-        renderCard({
+        renderLookupCard({
           title: cleaned.length > 32 ? cleaned.slice(0, 32) + '...' : cleaned,
           translation: '网络连接超时，请检查网络设置',
           rawTrans: '网络连接超时',
@@ -871,10 +934,10 @@
           sourceName: '查询失败',
           isSentence: true,
           loading: false
-        }, rect);
+        });
       }
     } else {
-      renderCard({
+      renderLookupCard({
         title: cleaned.length > 32 ? cleaned.slice(0, 32) + '...' : cleaned,
         translation: '本地词典与术语库未收录；整句翻译需要在线引擎',
         rawTrans: '',
@@ -883,17 +946,24 @@
         sourceName: '仅离线查询',
         isSentence: true,
         loading: false
-      }, rect);
+      });
     }
   }
 
   // Handle selection search
   function processSelection(selection, overrideText = null, eventTrigger = null) {
-    if (!settings.enabled && !overrideText) return;
-    if (isBlacklisted() && !overrideText) return;
+    if ((!settings.enabled || isBlacklisted()) && !overrideText) {
+      clearActiveSelectionAnchor();
+      return;
+    }
 
     let text = overrideText;
     let rect = null;
+    pendingSelectionData = null;
+
+    if (overrideText) {
+      clearActiveSelectionAnchor();
+    }
 
     if (!text) {
       const activeEl = document.activeElement;
@@ -901,6 +971,7 @@
         const start = activeEl.selectionStart;
         const end = activeEl.selectionEnd;
         if (typeof start === 'number' && typeof end === 'number' && end > start) {
+          clearActiveSelectionAnchor();
           text = activeEl.value.substring(start, end);
           rect = activeEl.getBoundingClientRect();
         }
@@ -910,12 +981,22 @@
         text = selection.toString();
         try {
           const range = selection.getRangeAt(0);
-          rect = range.getBoundingClientRect();
-        } catch (e) {}
+          const anchor = setActiveSelectionAnchor(range);
+          rect = anchor ? anchor.getRect(window.innerWidth, window.innerHeight) : null;
+          if (!rect) {
+            clearActiveSelectionAnchor();
+            hideTriggerIcon();
+            hideCard(true);
+            return;
+          }
+        } catch (e) {
+          clearActiveSelectionAnchor();
+        }
       }
     }
 
     if (!text) {
+      clearActiveSelectionAnchor();
       hideTriggerIcon();
       hideCard();
       return;
@@ -924,6 +1005,7 @@
     const cleaned = dictService.cleanPaperText(text, settings.deHyphen);
 
     if (!dictService.isLookupEligible(cleaned)) {
+      clearActiveSelectionAnchor();
       hideTriggerIcon();
       hideCard();
       return;
@@ -958,6 +1040,7 @@
       );
 
       if (!isModifierPressed) {
+        clearActiveSelectionAnchor();
         hideTriggerIcon();
         hideCard();
         return;
@@ -986,6 +1069,7 @@
       const isInputSelection = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && activeEl.selectionEnd > activeEl.selectionStart;
 
       if ((!selection || selection.isCollapsed) && !isInputSelection) {
+        clearActiveSelectionAnchor();
         hideTriggerIcon();
         hideCard();
         return;
@@ -1006,10 +1090,13 @@
 
   // Key up for keyboard selections (Shift + Arrows)
   document.addEventListener('keyup', (e) => {
-    if (e.key === 'Shift' || e.key.startsWith('Arrow')) {
+    if (isSelectionNavigationKey(e)) {
       triggerSelectionCheck(e);
     }
   }, false);
+
+  window.addEventListener('scroll', scheduleSelectionCardPosition, { capture: true, passive: true });
+  window.addEventListener('resize', scheduleSelectionCardPosition, { passive: true });
 
   // Click outside to dismiss
   document.addEventListener('mousedown', (e) => {
