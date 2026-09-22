@@ -22,11 +22,41 @@
 
     if (!anchoredRange || typeof anchoredRange.getBoundingClientRect !== 'function') return null;
 
+    function isConnected() {
+      const nodes = [
+        anchoredRange.commonAncestorContainer,
+        anchoredRange.startContainer,
+        anchoredRange.endContainer
+      ];
+      return nodes.every((node) => !node || typeof node.isConnected !== 'boolean' || node.isConnected);
+    }
+
+    function hasMatchingBoundaries(currentRange) {
+      const boundaries = ['startContainer', 'startOffset', 'endContainer', 'endOffset'];
+      if (boundaries.every((key) => key in anchoredRange && key in currentRange)) {
+        return boundaries.every((key) => anchoredRange[key] === currentRange[key]);
+      }
+      return currentRange === anchoredRange;
+    }
+
     return {
+      matchesSelection(selection) {
+        if (disposed || !anchoredRange || !isConnected()) return false;
+        if (!selection || selection.isCollapsed || selection.rangeCount < 1) return false;
+        if (typeof selection.getRangeAt !== 'function') return false;
+
+        try {
+          return hasMatchingBoundaries(selection.getRangeAt(0));
+        } catch (error) {
+          return false;
+        }
+      },
+
       getRect(viewportWidth, viewportHeight) {
         if (disposed || !anchoredRange || typeof anchoredRange.getBoundingClientRect !== 'function') {
           return null;
         }
+        if (!isConnected()) return null;
 
         try {
           const rect = anchoredRange.getBoundingClientRect();

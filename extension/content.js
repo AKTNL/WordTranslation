@@ -82,6 +82,7 @@
   let currentWordData = null;
   let activeSelectionAnchor = null;
   let selectionPositionFrame = null;
+  let lookupGeneration = 0;
 
   // Create isolated Shadow DOM
   function setupShadowDOM() {
@@ -378,7 +379,11 @@
       e.stopPropagation();
       hideTriggerIcon();
       if (pendingSelectionData) {
-        executeLookup(pendingSelectionData.text, pendingSelectionData.rect);
+        executeLookup(
+          pendingSelectionData.text,
+          pendingSelectionData.rect,
+          pendingSelectionData.lookupToken
+        );
       }
     });
 
@@ -524,6 +529,8 @@
 
   function hideCard(force = false) {
     if (isPinned && !force) return;
+    lookupGeneration++;
+    pendingSelectionData = null;
     clearActiveSelectionAnchor();
     if (cardEl) {
       cardEl.classList.remove('visible');
@@ -827,18 +834,23 @@
   }
 
   // Perform actual lookup and render
-  async function executeLookup(cleaned, rect) {
+  async function executeLookup(cleaned, rect, lookupToken) {
+    if (lookupToken !== lookupGeneration) return;
     recordHistory(cleaned);
 
     const isSingleWord = dictService.isSingleWord(cleaned);
     const expectedAnchor = activeSelectionAnchor;
-    const renderLookupCard = (data) => renderCard(data, rect, expectedAnchor);
+    const renderLookupCard = (data) => {
+      if (lookupToken !== lookupGeneration) return;
+      renderCard(data, rect, expectedAnchor);
+    };
 
     try {
       const glossaryResult = await chrome.runtime.sendMessage({
         type: 'LOOKUP_GLOSSARY',
         text: cleaned
       });
+      if (lookupToken !== lookupGeneration) return;
       if (glossaryResult && glossaryResult.success && glossaryResult.found) {
         renderLookupCard({
           title: cleaned,
@@ -855,6 +867,7 @@
         return;
       }
     } catch (error) {
+      if (lookupToken !== lookupGeneration) return;
       // The built-in dictionary remains available if the background worker is restarting.
     }
 
@@ -882,6 +895,7 @@
 
     // Fallback to online translation if enabled
     if (settings.onlineFallback) {
+      if (lookupToken !== lookupGeneration) return;
       renderLookupCard({
         title: cleaned.length > 32 ? cleaned.slice(0, 32) + '...' : cleaned,
         phonetic: '',
@@ -895,10 +909,12 @@
       });
 
       try {
+        if (lookupToken !== lookupGeneration) return;
         const response = await chrome.runtime.sendMessage({
           type: 'TRANSLATE_ONLINE',
           text: cleaned
         });
+        if (lookupToken !== lookupGeneration) return;
 
         if (response && response.success) {
           renderLookupCard({
@@ -925,6 +941,7 @@
           });
         }
       } catch (err) {
+        if (lookupToken !== lookupGeneration) return;
         renderLookupCard({
           title: cleaned.length > 32 ? cleaned.slice(0, 32) + '...' : cleaned,
           translation: '网络连接超时，请检查网络设置',
@@ -952,6 +969,9 @@
 
   // Handle selection search
   function processSelection(selection, overrideText = null, eventTrigger = null) {
+    const lookupToken = ++lookupGeneration;
+    pendingSelectionData = null;
+
     if ((!settings.enabled || isBlacklisted()) && !overrideText) {
       clearActiveSelectionAnchor();
       return;
@@ -959,8 +979,6 @@
 
     let text = overrideText;
     let rect = null;
-    pendingSelectionData = null;
-
     if (overrideText) {
       clearActiveSelectionAnchor();
     }
@@ -1024,7 +1042,7 @@
 
     // Direct override (e.g. from context menu)
     if (overrideText) {
-      executeLookup(cleaned, rect);
+      executeLookup(cleaned, rect, lookupToken);
       return;
     }
 
@@ -1045,17 +1063,17 @@
         hideCard();
         return;
       }
-      executeLookup(cleaned, rect);
+      executeLookup(cleaned, rect, lookupToken);
       return;
     }
 
     if (mode === 'direct') {
-      executeLookup(cleaned, rect);
+      executeLookup(cleaned, rect, lookupToken);
       return;
     }
 
     // Mode === 'icon' (Default: Unobtrusive lightweight trigger icon)
-    pendingSelectionData = { text: cleaned, rect };
+    pendingSelectionData = { text: cleaned, rect, lookupToken };
     showTriggerIcon(rect);
   }
 
@@ -1069,9 +1087,8 @@
       const isInputSelection = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && activeEl.selectionEnd > activeEl.selectionStart;
 
       if ((!selection || selection.isCollapsed) && !isInputSelection) {
-        clearActiveSelectionAnchor();
         hideTriggerIcon();
-        hideCard();
+        hideCard(true);
         return;
       }
       processSelection(selection, null, e);
@@ -1092,6 +1109,15 @@
   document.addEventListener('keyup', (e) => {
     if (isSelectionNavigationKey(e)) {
       triggerSelectionCheck(e);
+    }
+  }, false);
+
+  document.addEventListener('selectionchange', () => {
+    if (!activeSelectionAnchor) return;
+    const selection = window.getSelection();
+    if (!activeSelectionAnchor.matchesSelection(selection)) {
+      hideTriggerIcon();
+      hideCard(true);
     }
   }, false);
 

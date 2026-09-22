@@ -98,6 +98,49 @@ test('range anchors reject invalid, empty, and fully offscreen rectangles', () =
   assert.equal(anchor.getRect(300, 200), null);
 });
 
+test('range anchors reject disconnected boundaries and mismatched selections', () => {
+  const selectedNode = { isConnected: true };
+  const otherNode = { isConnected: true };
+  const range = {
+    startContainer: selectedNode,
+    endContainer: selectedNode,
+    commonAncestorContainer: selectedNode,
+    startOffset: 1,
+    endOffset: 4,
+    cloneRange() {
+      return {
+        startContainer: selectedNode,
+        endContainer: selectedNode,
+        commonAncestorContainer: selectedNode,
+        startOffset: 1,
+        endOffset: 4,
+        getBoundingClientRect: () => ({
+          left: 10, top: 10, right: 40, bottom: 30, width: 30, height: 20
+        })
+      };
+    },
+    getBoundingClientRect() { return this.cloneRange().getBoundingClientRect(); }
+  };
+  const anchor = createRangeAnchor(range);
+  const currentSelection = { rangeCount: 1, isCollapsed: false, getRangeAt: () => range };
+
+  assert.equal(anchor.matchesSelection(currentSelection), true);
+  assert.equal(anchor.matchesSelection({ ...currentSelection, isCollapsed: true }), false);
+  assert.equal(anchor.matchesSelection({
+    rangeCount: 1,
+    isCollapsed: false,
+    getRangeAt: () => ({ ...range, startContainer: otherNode })
+  }), false);
+
+  range.startOffset = 2;
+  assert.equal(anchor.matchesSelection(currentSelection), false);
+  range.startOffset = 1;
+
+  selectedNode.isConnected = false;
+  assert.equal(anchor.matchesSelection(currentSelection), false);
+  assert.equal(anchor.getRect(300, 200), null);
+});
+
 test('range anchor disposal detaches the cloned range when supported', () => {
   assert.equal(typeof createRangeAnchor, 'function');
   let detachCalls = 0;
@@ -236,6 +279,7 @@ function createContentHarness() {
 
   let selection = { rangeCount: 0, isCollapsed: true, toString: () => '' };
   let liveRect = null;
+  let selectedNode = null;
   let detachCalls = 0;
   let nextTimerId = 1;
   let timers = [];
@@ -258,7 +302,7 @@ function createContentHarness() {
     cleanPaperText(text) { return String(text || '').trim(); }
     isLookupEligible(text) { return Boolean(text); }
     isSingleWord(text) { return !String(text).includes(' '); }
-    lookup() { return { found: false }; }
+    lookupLocal() { return { found: false }; }
     parseDefinitions() { return []; }
   }
   window.DictService = DictServiceMock;
@@ -309,11 +353,22 @@ function createContentHarness() {
     requests,
     setDomSelection(text, rect) {
       liveRect = rect;
+      selectedNode = { isConnected: true };
       const clonedRange = {
+        startContainer: selectedNode,
+        endContainer: selectedNode,
+        commonAncestorContainer: selectedNode,
+        startOffset: 0,
+        endOffset: text.length,
         getBoundingClientRect: () => liveRect,
         detach() { detachCalls++; }
       };
       const range = {
+        startContainer: selectedNode,
+        endContainer: selectedNode,
+        commonAncestorContainer: selectedNode,
+        startOffset: 0,
+        endOffset: text.length,
         cloneRange: () => clonedRange,
         getBoundingClientRect: () => liveRect
       };
@@ -326,6 +381,9 @@ function createContentHarness() {
     },
     setCollapsedSelection() {
       selection = { rangeCount: 0, isCollapsed: true, toString: () => '' };
+    },
+    disconnectSelection() {
+      if (selectedNode) selectedNode.isConnected = false;
     },
     setRect(rect) { liveRect = rect; },
     flushTimers() {
@@ -479,12 +537,77 @@ test('close and outside dismiss dispose the live range anchor', async () => {
   assert.equal(dismissHarness.getDetachCalls(), 1);
 });
 
+test('selectionchange force-hides pinned cards for collapsed, mismatched, or disconnected selections', async () => {
+  const collapsedHarness = createContentHarness();
+  const collapsedCard = await showSelectionCard(collapsedHarness, {
+    left: 100, top: 100, right: 200, bottom: 120, width: 100, height: 20
+  });
+  collapsedHarness.getShadowRoot().querySelector('#btn-pin').onclick({ stopPropagation() {} });
+  collapsedHarness.setCollapsedSelection();
+  collapsedHarness.document.dispatch('selectionchange');
+  assert.equal(collapsedCard.classList.contains('visible'), false);
+  assert.equal(collapsedHarness.getDetachCalls(), 1);
+
+  const mismatchHarness = createContentHarness();
+  const mismatchCard = await showSelectionCard(mismatchHarness, {
+    left: 100, top: 100, right: 200, bottom: 120, width: 100, height: 20
+  });
+  mismatchHarness.setDomSelection('different', {
+    left: 220, top: 100, right: 320, bottom: 120, width: 100, height: 20
+  });
+  mismatchHarness.document.dispatch('selectionchange');
+  assert.equal(mismatchCard.classList.contains('visible'), false);
+  assert.equal(mismatchHarness.getDetachCalls(), 1);
+
+  const disconnectedHarness = createContentHarness();
+  const disconnectedCard = await showSelectionCard(disconnectedHarness, {
+    left: 100, top: 100, right: 200, bottom: 120, width: 100, height: 20
+  });
+  disconnectedHarness.disconnectSelection();
+  disconnectedHarness.document.dispatch('selectionchange');
+  assert.equal(disconnectedCard.classList.contains('visible'), false);
+  assert.equal(disconnectedHarness.getDetachCalls(), 1);
+});
+
+test('closed and replaced lookups stop before online translation while the current request completes', async () => {
+  const closedHarness = createContentHarness();
+  closedHarness.setDomSelection('closed', {
+    left: 100, top: 100, right: 200, bottom: 120, width: 100, height: 20
+  });
+  closedHarness.document.dispatch('mouseup', { composedPath: () => [] });
+  closedHarness.flushTimers();
+  closedHarness.document.dispatch('keydown', { key: 'Escape' });
+  await resolveRequest(closedHarness, 0, { success: true, found: false });
+  assert.deepEqual(closedHarness.requests.map((request) => request.message.type), ['LOOKUP_GLOSSARY']);
+
+  const replacedHarness = createContentHarness();
+  replacedHarness.dispatchRuntimeMessage({ type: 'TRIGGER_TRANSLATE_FROM_MENU', text: 'old context' });
+  replacedHarness.dispatchRuntimeMessage({ type: 'TRIGGER_TRANSLATE_FROM_MENU', text: 'current context' });
+  await resolveRequest(replacedHarness, 0, { success: true, found: false });
+  assert.deepEqual(
+    replacedHarness.requests.map((request) => request.message.type),
+    ['LOOKUP_GLOSSARY', 'LOOKUP_GLOSSARY']
+  );
+
+  await resolveRequest(replacedHarness, 1, { success: true, found: false });
+  assert.equal(replacedHarness.requests[2].message.type, 'TRANSLATE_ONLINE');
+  await resolveRequest(replacedHarness, 2, {
+    success: true,
+    translation: 'current translation',
+    source: 'test online'
+  });
+  const card = replacedHarness.getCard();
+  assert(card.classList.contains('visible'));
+  assert.match(card.innerHTML, /current context/);
+  assert.match(card.innerHTML, /current translation/);
+});
+
 test('content script owns and clears one active DOM selection anchor', () => {
   assert.match(contentJs, /let activeSelectionAnchor = null/);
   assert.match(contentJs, /function clearActiveSelectionAnchor\(\)/);
   assert.match(contentJs, /activeSelectionAnchor\.dispose\(\)/);
   assert.match(contentJs, /activeSelectionAnchor = createRangeAnchor\(range\)/);
-  assert.match(contentJs, /isInputSelection[\s\S]*clearActiveSelectionAnchor\(\)/);
+  assert.match(contentJs, /activeEl\.tagName === 'INPUT'[\s\S]{0,500}?clearActiveSelectionAnchor\(\)/);
   assert.match(contentJs, /overrideText[\s\S]*clearActiveSelectionAnchor\(\)/);
 });
 
