@@ -74,8 +74,8 @@
     drawerNotesList.innerHTML = notes.map((item) => `
       <div class="drawer-note-item">
         <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">${colorLabels[item.color] || '[要点]'} ${new Date(item.createdAt).toLocaleDateString()}</div>
-        <div class="drawer-note-text">“${item.text}”</div>
-        ${item.note ? `<div class="drawer-note-comment">批注: ${item.note}</div>` : ''}
+        <div class="drawer-note-text">“${escapeHtml(item.text)}”</div>
+        ${item.note ? `<div class="drawer-note-comment">批注: ${escapeHtml(item.note)}</div>` : ''}
       </div>
     `).join('');
   }
@@ -136,10 +136,10 @@
 
     drawerGlossaryList.innerHTML = terms.map((item) => `
       <div class="drawer-note-item" style="border-left:3px solid #f59e0b;">
-        <div style="font-size:13px;font-weight:700;color:#fbbf24;margin-bottom:2px;">${item.term}</div>
-        <div style="font-size:12.5px;color:#f8fafc;margin-bottom:4px;">${item.definition}</div>
+        <div style="font-size:13px;font-weight:700;color:#fbbf24;margin-bottom:2px;">${escapeHtml(item.term)}</div>
+        <div style="font-size:12.5px;color:#f8fafc;margin-bottom:4px;">${escapeHtml(item.definition)}</div>
         <div style="font-size:11px;color:#94a3b8;background:#1e293b;padding:4px 6px;border-radius:4px;line-height:1.4;">
-          “${item.sentence}”
+          “${escapeHtml(item.sentence)}”
         </div>
       </div>
     `).join('');
