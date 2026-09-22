@@ -5,6 +5,7 @@
     'dict/academic_dict.js',
     'dict_service.js',
     'glossary_service.js',
+    'selection_anchor.js',
     'content.js',
     'bilingual.js'
   ];
