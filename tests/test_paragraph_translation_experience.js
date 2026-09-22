@@ -198,6 +198,7 @@ function createAcademicElement(tagName, text, options = {}) {
     dataset: options.dataset || {},
     parentElement: options.parentElement || null,
     children: [],
+    _computedStyle: options.computedStyle || null,
     offsetParent: options.hidden ? null : {},
     offsetHeight: options.hidden ? 0 : 40,
     offsetWidth: options.hidden ? 0 : 400,
@@ -236,7 +237,11 @@ function withAcademicDom(run) {
   const body = createAcademicElement('BODY', '');
   const documentElement = createAcademicElement('HTML', '');
   global.document = { body, documentElement };
-  global.window = {};
+  global.window = {
+    getComputedStyle(element) {
+      return element._computedStyle || { display: 'block', visibility: 'visible' };
+    }
+  };
   try {
     return run({ body, documentElement });
   } finally {
@@ -256,7 +261,9 @@ test('academic filtering preserves legacy blocks and inline links', () => withAc
   paragraph.appendChild(createAcademicElement('A', 'supporting citation'));
 
   assert.equal(filter.isEligible(paragraph), true);
-  assert.equal(filter.isEligible(createAcademicElement('H2', 'Methods')), true);
+  for (const tag of ['H1', 'H2', 'H3', 'H4', 'H5', 'H6']) {
+    assert.equal(filter.isEligible(createAcademicElement(tag, `${tag} Methods`)), true, tag);
+  }
   assert.equal(filter.isEligible(createAcademicElement(
     'BLOCKQUOTE',
     'This quoted academic observation remains part of the article body.'
@@ -295,6 +302,19 @@ test('academic filtering accepts semantic and sufficiently long leaf divs', () =
   assert.equal(filter.isEligible(longLeaf), true);
 }));
 
+test('academic filtering preserves prose divs with one inline link', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const paragraph = createAcademicElement(
+    'DIV',
+    'The full experiment protocol appears in the supplementary methods and supports this conclusion.',
+    { role: 'paragraph' }
+  );
+  paragraph.appendChild(createAcademicElement('A', 'supplementary methods'));
+
+  assert.equal(filter.isCandidateTag(paragraph), true);
+  assert.equal(filter.isEligible(paragraph), true);
+}));
+
 test('academic filtering rejects div containers and interactive descendants', () => withAcademicDom(() => {
   const filter = new AcademicFilter();
   const parent = createAcademicElement(
@@ -319,11 +339,6 @@ test('academic filtering rejects div containers and interactive descendants', ()
 
 test('academic filtering rejects excluded ancestors, generated nodes, code, and math', () => withAcademicDom(() => {
   const filter = new AcademicFilter();
-  const nav = createAcademicElement('NAV', '');
-  const navigationText = nav.appendChild(createAcademicElement(
-    'DIV',
-    'This navigation copy is deliberately long enough to resemble an article paragraph.'
-  ));
   const generated = createAcademicElement(
     'DIV',
     'This generated translation must never become a translation source.',
@@ -332,10 +347,114 @@ test('academic filtering rejects excluded ancestors, generated nodes, code, and 
   const code = createAcademicElement('CODE', 'const academicModel = true;');
   const math = createAcademicElement('MATH', 'The formula x equals y plus z is represented here.');
 
-  assert.equal(filter.isEligible(navigationText), false);
   assert.equal(filter.isEligible(generated), false);
   assert.equal(filter.isEligible(code), false);
   assert.equal(filter.isEligible(math), false);
+}));
+
+test('academic filtering parametrically rejects excluded structural ancestors', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const cases = [
+    { tag: 'PRE' },
+    { tag: 'CODE' },
+    { tag: 'MATH' },
+    { tag: 'NAV' },
+    { tag: 'HEADER' },
+    { tag: 'FOOTER' },
+    { tag: 'ASIDE' },
+    { tag: 'FORM' },
+    { tag: 'PAPER-DICT-HOST' },
+    { tag: 'PAPERDICT-BILINGUAL-CAPSULE-HOST' },
+    { tag: 'SECTION', className: 'references' },
+    { tag: 'SECTION', id: 'bibliography-list' }
+  ];
+
+  for (const options of cases) {
+    const ancestor = createAcademicElement(options.tag, '', options);
+    const candidate = ancestor.appendChild(createAcademicElement(
+      'DIV',
+      'This eligible-looking English paragraph must be rejected because its ancestor is non-content.',
+      { role: 'paragraph' }
+    ));
+    assert.equal(filter.isCandidateTag(candidate), true, JSON.stringify(options));
+    assert.equal(filter.isEligible(candidate), false, JSON.stringify(options));
+  }
+}));
+
+test('academic filtering rejects interactive and landmark ARIA roles on self or ancestors', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const roles = [
+    'button', 'navigation', 'menu', 'menuitem', 'toolbar', 'tab', 'tablist',
+    'dialog', 'search', 'form', 'banner', 'contentinfo', 'complementary'
+  ];
+
+  for (const role of roles) {
+    const selfCandidate = createAcademicElement(
+      'DIV',
+      'This eligible-looking English block uses an interactive or landmark role and is not article prose.',
+      { role }
+    );
+    assert.equal(filter.isCandidateTag(selfCandidate), true, `self role=${role}`);
+    assert.equal(filter.isEligible(selfCandidate), false, `self role=${role}`);
+
+    const ancestor = createAcademicElement('SECTION', '', { role });
+    const nestedCandidate = ancestor.appendChild(createAcademicElement(
+      'DIV',
+      'This semantic English paragraph is nested inside a non-content ARIA landmark.',
+      { role: 'paragraph' }
+    ));
+    assert.equal(filter.isCandidateTag(nestedCandidate), true, `ancestor role=${role}`);
+    assert.equal(filter.isEligible(nestedCandidate), false, `ancestor role=${role}`);
+  }
+}));
+
+test('academic filtering rejects link-only and link-dense div collections', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const linkOnly = createAcademicElement(
+    'DIV',
+    'Methods Results References',
+    { role: 'paragraph' }
+  );
+  for (const label of ['Methods', 'Results', 'References']) {
+    linkOnly.appendChild(createAcademicElement('A', label));
+  }
+
+  const linkDense = createAcademicElement(
+    'DIV',
+    'Browse Dataset Model Source Evaluation and related research resources.',
+    { role: 'paragraph' }
+  );
+  for (const label of ['Dataset', 'Model', 'Source', 'Evaluation']) {
+    linkDense.appendChild(createAcademicElement('A', label));
+  }
+
+  for (const candidate of [linkOnly, linkDense]) {
+    assert.equal(filter.isCandidateTag(candidate), true);
+    assert.equal(filter.isEligible(candidate), false);
+  }
+}));
+
+test('academic filtering rejects computed CSS hiding on self or ancestors', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const cases = [
+    { location: 'self', computedStyle: { display: 'none', visibility: 'visible' } },
+    { location: 'self', computedStyle: { display: 'block', visibility: 'hidden' } },
+    { location: 'ancestor', computedStyle: { display: 'none', visibility: 'visible' } },
+    { location: 'ancestor', computedStyle: { display: 'block', visibility: 'hidden' } }
+  ];
+
+  for (const item of cases) {
+    const candidate = createAcademicElement(
+      'DIV',
+      'This eligible-looking English paragraph is hidden only through computed CSS.',
+      { role: 'paragraph', computedStyle: item.location === 'self' ? item.computedStyle : null }
+    );
+    if (item.location === 'ancestor') {
+      createAcademicElement('SECTION', '', { computedStyle: item.computedStyle }).appendChild(candidate);
+    }
+    assert.equal(filter.isCandidateTag(candidate), true, JSON.stringify(item));
+    assert.equal(filter.isEligible(candidate), false, JSON.stringify(item));
+  }
 }));
 
 test('academic filtering enforces English, visibility, and short metadata constraints', () => withAcademicDom(() => {

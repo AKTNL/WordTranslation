@@ -202,6 +202,10 @@
       this.excludedClassIdRegex = /(reference|bibliography|biblio|ref-list|footnote|author-notes|header|navbar|sidebar|footer|menu|comment|pager|pagination|disclaimer|copyright|doi-box)/i;
       this.mathClassIdRegex = /(?:^|[\s_-])(?:formula|math|mathjax|katex|mjx-container)(?:$|[\s_-])/i;
       this.semanticDivHintRegex = /(?:^|[\s_-])(?:paragraph|para|prose|abstract|article[-_]?text|body[-_]?text)(?:$|[\s_-])/i;
+      this.excludedRoles = new Set([
+        'button', 'navigation', 'menu', 'menuitem', 'toolbar', 'tab', 'tablist',
+        'dialog', 'search', 'form', 'banner', 'contentinfo', 'complementary'
+      ]);
       this.blockCandidateTags = new Set([
         'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'LI'
       ]);
@@ -209,6 +213,44 @@
 
     isReferenceHeading(text) {
       return this.refHeadingRegex.test(String(text || '').trim());
+    }
+
+    hasExcludedRole(el) {
+      if (!el || typeof el.getAttribute !== 'function') return false;
+      const roles = String(el.getAttribute('role') || '').toLowerCase().split(/\s+/).filter(Boolean);
+      return roles.some((role) => this.excludedRoles.has(role));
+    }
+
+    isCssHidden(el) {
+      if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return false;
+      try {
+        const style = window.getComputedStyle(el);
+        if (!style) return false;
+        const display = String(style.display || '').toLowerCase();
+        const visibility = String(style.visibility || '').toLowerCase();
+        return display === 'none' || visibility === 'hidden' || visibility === 'collapse';
+      } catch (error) {
+        return false;
+      }
+    }
+
+    isLinkDense(el) {
+      if (!el || String(el.tagName || '').toUpperCase() !== 'DIV' || typeof el.querySelectorAll !== 'function') {
+        return false;
+      }
+      const anchors = Array.from(el.querySelectorAll('a'));
+      if (anchors.length === 0) return false;
+
+      const textLength = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().length;
+      if (textLength === 0) return false;
+      const linkedLength = anchors.reduce((total, anchor) => {
+        return total + (anchor.innerText || anchor.textContent || '').replace(/\s+/g, ' ').trim().length;
+      }, 0);
+      const linkedRatio = Math.min(linkedLength / textLength, 1);
+      const nonLinkedLength = Math.max(textLength - linkedLength, 0);
+
+      if (anchors.length === 1) return linkedRatio >= 0.8 && nonLinkedLength < 20;
+      return linkedRatio >= 0.5 || (anchors.length >= 4 && linkedRatio >= 0.35);
     }
 
     /**
@@ -219,6 +261,7 @@
 
       // Tag name check
       if (this.excludedTags.has(el.tagName.toUpperCase())) return true;
+      if (this.isLinkDense(el)) return true;
 
       // PaperDict UI element check
       if (el.classList && (
@@ -234,6 +277,7 @@
       while (cur && cur !== document.body && cur !== document.documentElement) {
         const tag = cur.tagName ? cur.tagName.toUpperCase() : '';
         if (this.excludedTags.has(tag)) return true;
+        if (this.hasExcludedRole(cur)) return true;
 
         if (cur.classList && (
           cur.classList.contains('pd-bilingual-trans') ||
@@ -269,6 +313,8 @@
         if (cur.dataset && cur.dataset.pdExclude === 'true') {
           return true;
         }
+
+        if (this.isCssHidden(cur)) return true;
 
         cur = cur.parentElement;
       }
