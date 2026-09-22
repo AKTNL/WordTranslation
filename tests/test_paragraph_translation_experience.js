@@ -160,6 +160,7 @@ test('range anchor disposal detaches the cloned range when supported', () => {
 
 const {
   AcademicFilter,
+  PaperBilingualManager,
   getAriaRoleTokens,
   isLinkElement
 } = require('../extension/bilingual.js');
@@ -843,6 +844,333 @@ test('content discovery uses a bounded number of subtree queries', () => withAca
   assert.equal(candidateQueries.length, 1);
   assert(queryStats.length <= 2, `expected at most 2 subtree queries, received ${queryStats.length}`);
 }));
+
+function withSchedulingDom(options, run) {
+  const previous = {
+    document: global.document,
+    window: global.window,
+    IntersectionObserver: global.IntersectionObserver,
+    MutationObserver: global.MutationObserver
+  };
+  const body = createAcademicElement('BODY', '');
+  const documentElement = createAcademicElement('HTML', '');
+  documentElement.dataset = {};
+  global.document = { body, documentElement };
+  global.window = {
+    innerWidth: options.innerWidth || 800,
+    innerHeight: options.innerHeight || 600,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible' })
+  };
+
+  if (Object.prototype.hasOwnProperty.call(options, 'IntersectionObserver')) {
+    global.IntersectionObserver = options.IntersectionObserver;
+  } else {
+    delete global.IntersectionObserver;
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'MutationObserver')) {
+    global.MutationObserver = options.MutationObserver;
+  } else {
+    delete global.MutationObserver;
+  }
+
+  try {
+    return run({ body, documentElement });
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete global[name];
+      else global[name] = value;
+    }
+  }
+}
+
+function makeSchedulingElement(top = 20, bottom = 80, left = 10, right = 210, options = {}) {
+  const element = createAcademicElement(
+    options.tagName || 'P',
+    options.text || 'This academic paragraph is long enough to enter the translation queue.',
+    options
+  );
+  element.nodeType = 1;
+  element.getBoundingClientRect = () => ({
+    top,
+    bottom,
+    left,
+    right,
+    width: right - left,
+    height: bottom - top
+  });
+  return element;
+}
+
+function createObserverDouble() {
+  const instances = [];
+  class ObserverDouble {
+    constructor(callback, options) {
+      this.callback = callback;
+      this.options = options;
+      this.observed = [];
+      this.unobserved = [];
+      this.disconnectCalls = 0;
+      this.observeCalls = [];
+      instances.push(this);
+    }
+
+    observe(target, options) {
+      this.observed.push(target);
+      this.observeCalls.push({ target, options });
+    }
+
+    unobserve(target) {
+      this.unobserved.push(target);
+    }
+
+    disconnect() {
+      this.disconnectCalls++;
+    }
+
+    emit(records) {
+      this.callback(records);
+    }
+  }
+  return { ObserverDouble, instances };
+}
+
+function silenceTranslationPipeline(manager) {
+  manager.processQueue = () => {};
+  manager.renderLoadingPlaceholder = () => {};
+  manager.applyDisplayModeToAll = () => {};
+  manager.updateCapsuleStats = () => {};
+}
+
+test('viewport scheduling uses strict rectangle overlap with both window dimensions', () => {
+  withSchedulingDom({ innerWidth: 800, innerHeight: 600 }, () => {
+    const manager = new PaperBilingualManager();
+    assert.equal(manager.isElementInViewport(makeSchedulingElement(20, 80, 10, 210)), true);
+    assert.equal(manager.isElementInViewport(makeSchedulingElement(-20, 1, 10, 210)), true);
+    assert.equal(manager.isElementInViewport(makeSchedulingElement(599, 620, 10, 210)), true);
+    assert.equal(manager.isElementInViewport(makeSchedulingElement(20, 80, -20, 1)), true);
+    assert.equal(manager.isElementInViewport(makeSchedulingElement(20, 80, 799, 820)), true);
+    assert.equal(manager.isElementInViewport(makeSchedulingElement(20, 80, 10, 210)), true);
+    assert.equal(manager.isElementInViewport(makeSchedulingElement(-20, 0, 10, 210)), false);
+    assert.equal(manager.isElementInViewport(makeSchedulingElement(600, 620, 10, 210)), false);
+    assert.equal(manager.isElementInViewport(makeSchedulingElement(20, 80, -20, 0)), false);
+    assert.equal(manager.isElementInViewport(makeSchedulingElement(20, 80, 800, 820)), false);
+    assert.equal(manager.isElementInViewport(null), false);
+  });
+});
+
+test('activation immediately queues visible elements and observes offscreen elements', () => {
+  withSchedulingDom({}, () => {
+    const visible = makeSchedulingElement(20, 80);
+    const offscreen = makeSchedulingElement(900, 960);
+    const observed = [];
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.filter = {
+      findContentElements: () => [visible, offscreen],
+      isEligible: () => true
+    };
+    manager.observer = { disconnect() {}, observe: (element) => observed.push(element) };
+    silenceTranslationPipeline(manager);
+
+    manager.activateBilingualView();
+
+    assert.deepEqual(manager.queue, [visible]);
+    assert.deepEqual(observed, [offscreen]);
+    assert.deepEqual(manager.elements, [visible, offscreen]);
+  });
+});
+
+test('intersection enqueues an observed paragraph once and then unobserves it', () => {
+  const intersection = createObserverDouble();
+  withSchedulingDom({ IntersectionObserver: intersection.ObserverDouble }, () => {
+    const paragraph = makeSchedulingElement(900, 960);
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.filter = { isEligible: () => true };
+    silenceTranslationPipeline(manager);
+    manager.setupObserver();
+    manager.registerElement(paragraph);
+
+    const observer = intersection.instances[0];
+    assert.deepEqual(observer.observed, [paragraph]);
+    observer.emit([{ isIntersecting: true, target: paragraph }]);
+    observer.emit([{ isIntersecting: true, target: paragraph }]);
+
+    assert.deepEqual(manager.queue, [paragraph]);
+    assert(observer.unobserved.includes(paragraph));
+  });
+});
+
+test('duplicate registration keeps one element state and one queue entry', () => {
+  withSchedulingDom({}, () => {
+    const paragraph = makeSchedulingElement();
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.filter = { isEligible: () => true };
+    silenceTranslationPipeline(manager);
+
+    assert.equal(manager.registerElement(paragraph), true);
+    assert.equal(manager.registerElement(paragraph), false);
+
+    assert.deepEqual(manager.elements, [paragraph]);
+    assert.deepEqual(manager.queue, [paragraph]);
+    assert.equal(manager.elementStateMap.get(paragraph).state, 'queued');
+  });
+});
+
+test('dynamic content registers the added element and descendants by viewport', () => {
+  const mutation = createObserverDouble();
+  withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, () => {
+    const addedVisible = makeSchedulingElement(20, 80);
+    const wrapper = makeSchedulingElement(900, 960, 10, 210, { tagName: 'SECTION' });
+    const descendantVisible = makeSchedulingElement(100, 160);
+    const descendantOffscreen = makeSchedulingElement(900, 960);
+    const observed = [];
+    const manager = new PaperBilingualManager();
+    manager.mode = 'chinese';
+    manager.filter = {
+      isExcluded: () => false,
+      isEligible: (element) => element !== wrapper,
+      findContentElements: (root) => root === wrapper
+        ? [descendantVisible, descendantOffscreen, descendantVisible]
+        : []
+    };
+    manager.observer = { observe: (element) => observed.push(element), disconnect() {} };
+    silenceTranslationPipeline(manager);
+    manager.observeContentChanges();
+
+    mutation.instances[0].emit([{
+      addedNodes: [addedVisible, wrapper, wrapper]
+    }]);
+
+    assert.deepEqual(manager.queue, [addedVisible, descendantVisible]);
+    assert.deepEqual(manager.elements, [addedVisible, descendantVisible, descendantOffscreen]);
+    assert(observed.includes(descendantOffscreen));
+  });
+});
+
+test('dynamic observation ignores generated nodes and excluded subtrees without rescanning them', () => {
+  const mutation = createObserverDouble();
+  withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, ({ body }) => {
+    const generated = [
+      makeSchedulingElement(20, 80, 10, 210, { tagName: 'DIV', className: 'pd-bilingual-trans' }),
+      makeSchedulingElement(20, 80, 10, 210, { tagName: 'DIV', className: 'pd-bilingual-loading' }),
+      makeSchedulingElement(20, 80, 10, 210, { tagName: 'DIV', className: 'pd-bilingual-fail' }),
+      makeSchedulingElement(20, 80, 10, 210, { tagName: 'DIV', className: 'pd-mode-toast' }),
+      makeSchedulingElement(20, 80, 10, 210, { tagName: 'PAPERDICT-BILINGUAL-CAPSULE-HOST' })
+    ];
+    const excluded = createAcademicElement('NAV', '');
+    excluded.nodeType = 1;
+    for (const node of [...generated, excluded]) body.appendChild(node);
+
+    const academicFilter = new AcademicFilter();
+    const scanned = [];
+    const registered = [];
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.filter = {
+      isExcluded: academicFilter.isExcluded.bind(academicFilter),
+      findContentElements(node) {
+        scanned.push(node);
+        return [];
+      }
+    };
+    manager.registerElement = (element) => registered.push(element);
+    silenceTranslationPipeline(manager);
+    manager.observeContentChanges();
+
+    mutation.instances[0].emit([{ addedNodes: [...generated, excluded] }]);
+
+    assert.deepEqual(registered, []);
+    assert.deepEqual(scanned, []);
+  });
+});
+
+test('restoring and re-entering page mode reconnects observers and resets queued work', () => {
+  const mutation = createObserverDouble();
+  withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, () => {
+    const paragraph = makeSchedulingElement();
+    const intersectionObserver = {
+      disconnectCalls: 0,
+      observed: [],
+      disconnect() { this.disconnectCalls++; },
+      observe(element) { this.observed.push(element); }
+    };
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.filter = {
+      findContentElements: () => [paragraph],
+      isEligible: () => true
+    };
+    manager.observer = intersectionObserver;
+    silenceTranslationPipeline(manager);
+
+    manager.activateBilingualView();
+    assert.equal(manager.elementStateMap.get(paragraph).state, 'queued');
+    manager.mode = 'original';
+    manager.restoreOriginalView();
+    assert.equal(manager.queue.length, 0);
+    assert.equal(manager.elementStateMap.get(paragraph).state, 'idle');
+
+    manager.mode = 'bilingual';
+    manager.activateBilingualView();
+    assert.deepEqual(manager.queue, [paragraph]);
+    assert.equal(intersectionObserver.disconnectCalls, 3);
+    assert.equal(mutation.instances[0].disconnectCalls, 3);
+    assert.equal(mutation.instances[0].observeCalls.length, 2);
+
+    manager.mode = 'original';
+    mutation.instances[0].emit([{ addedNodes: [makeSchedulingElement()] }]);
+    assert.deepEqual(manager.queue, [paragraph]);
+  });
+});
+
+test('restore resets queued state even when a rescan no longer discovers the element', () => {
+  withSchedulingDom({}, () => {
+    const paragraph = makeSchedulingElement();
+    let discovered = [paragraph];
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.filter = {
+      findContentElements: () => discovered,
+      isEligible: () => true
+    };
+    silenceTranslationPipeline(manager);
+
+    manager.activateBilingualView();
+    assert.equal(manager.elementStateMap.get(paragraph).state, 'queued');
+    discovered = [];
+    manager.activateBilingualView();
+    assert.deepEqual(manager.elements, []);
+
+    manager.mode = 'original';
+    manager.restoreOriginalView();
+
+    assert.deepEqual(manager.queue, []);
+    assert.equal(manager.elementStateMap.get(paragraph).state, 'idle');
+  });
+});
+
+test('missing observer APIs still enqueue every initially discovered paragraph', () => {
+  withSchedulingDom({}, () => {
+    const visible = makeSchedulingElement(20, 80);
+    const offscreen = makeSchedulingElement(900, 960);
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.filter = {
+      findContentElements: () => [visible, offscreen],
+      isEligible: () => true
+    };
+    silenceTranslationPipeline(manager);
+
+    manager.setupObserver();
+    manager.activateBilingualView();
+
+    assert.equal(manager.observer, null);
+    assert.equal(manager.mutationObserver, null);
+    assert.deepEqual(manager.queue, [visible, offscreen]);
+  });
+});
 
 const contentJs = fs.readFileSync(path.join(__dirname, '../extension/content.js'), 'utf8');
 const manifest = JSON.parse(

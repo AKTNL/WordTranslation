@@ -309,6 +309,7 @@
       return Boolean(el && el.classList && (
         el.classList.contains('pd-bilingual-trans') ||
         el.classList.contains('pd-bilingual-loading') ||
+        el.classList.contains('pd-bilingual-fail') ||
         el.classList.contains('pd-mode-toast')
       ));
     }
@@ -1068,8 +1069,11 @@
 
       this.cache = new Map(); // text -> translatedText
       this.elements = []; // all eligible content elements
+      this.registeredElements = new Set();
       this.elementStateMap = new WeakMap(); // el -> { state: 'idle'|'queued'|'translating'|'done', transEl, rawText, tokenMap }
       this.observer = null;
+      this.observedElements = new WeakSet();
+      this.mutationObserver = null;
 
       this.queue = [];
       this.activeRequests = 0;
@@ -1257,6 +1261,10 @@
         for (const entry of entries) {
           if (entry.isIntersecting) {
             const el = entry.target;
+            if (this.observer && typeof this.observer.unobserve === 'function') {
+              this.observer.unobserve(el);
+            }
+            this.observedElements.delete(el);
             const state = this.elementStateMap.get(el);
             if (!state || state.state === 'idle') {
               this.enqueueElement(el);
@@ -1268,6 +1276,72 @@
         rootMargin: '300px 0px 300px 0px',
         threshold: 0.01
       });
+    }
+
+    isElementInViewport(el) {
+      if (!el || typeof el.getBoundingClientRect !== 'function' || typeof window === 'undefined') {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return Boolean(rect) &&
+        rect.bottom > 0 && rect.top < window.innerHeight &&
+        rect.right > 0 && rect.left < window.innerWidth;
+    }
+
+    registerElement(el, options = {}) {
+      if (!el || (!options.knownEligible && !this.filter.isEligible(el))) return false;
+
+      let info = this.elementStateMap.get(el);
+      if (!info) {
+        info = { state: 'idle', transEl: null };
+        this.elementStateMap.set(el, info);
+      }
+      if (!this.registeredElements.has(el)) {
+        this.registeredElements.add(el);
+        this.elements.push(el);
+      }
+      if (info.state !== 'idle') return false;
+
+      if (this.isElementInViewport(el) || !this.observer) {
+        if (this.observer && typeof this.observer.unobserve === 'function') {
+          this.observer.unobserve(el);
+        }
+        this.observedElements.delete(el);
+        this.enqueueElement(el);
+      } else if (!this.observedElements.has(el)) {
+        this.observer.observe(el);
+        this.observedElements.add(el);
+      }
+      return true;
+    }
+
+    registerElements(elements, options = {}) {
+      for (const el of elements || []) this.registerElement(el, options);
+    }
+
+    setupMutationObserver() {
+      if (this.mutationObserver || typeof MutationObserver === 'undefined') return;
+      this.mutationObserver = new MutationObserver((records) => {
+        if (this.mode === 'original') return;
+        for (const record of records) {
+          for (const node of record.addedNodes || []) {
+            if (!node || node.nodeType !== 1 || this.filter.isExcluded(node)) continue;
+            this.registerElement(node);
+            this.registerElements(this.filter.findContentElements(node), { knownEligible: true });
+          }
+        }
+        this.applyDisplayModeToAll();
+        this.updateCapsuleStats();
+      });
+    }
+
+    observeContentChanges() {
+      this.setupMutationObserver();
+      if (!this.mutationObserver || typeof document === 'undefined') return;
+      const target = document.body || document.documentElement;
+      if (!target) return;
+      this.mutationObserver.disconnect();
+      this.mutationObserver.observe(target, { childList: true, subtree: true });
     }
 
     /**
@@ -1328,25 +1402,20 @@
      * Discovers academic content elements and hooks observer
      */
     activateBilingualView() {
-      this.elements = this.filter.findContentElements(document);
-
       // Cleanly re-observe elements
       if (this.observer) {
         this.observer.disconnect();
       }
+      this.observedElements = new WeakSet();
+      this.elements = [];
+      this.registeredElements.clear();
 
-      for (const el of this.elements) {
-        if (!this.elementStateMap.has(el)) {
-          this.elementStateMap.set(el, { state: 'idle', transEl: null });
-        }
-        if (this.observer) {
-          this.observer.observe(el);
-        }
-      }
+      const discovered = this.filter.findContentElements(document);
+      this.registerElements(discovered, { knownEligible: true });
+      this.observeContentChanges();
 
       this.updateCapsuleStats();
       this.applyDisplayModeToAll();
-      this.processQueue();
     }
 
     restoreOriginalView() {
@@ -1354,12 +1423,16 @@
       if (this.observer) {
         this.observer.disconnect();
       }
+      if (this.mutationObserver) {
+        this.mutationObserver.disconnect();
+      }
+      this.observedElements = new WeakSet();
 
-      // 2. Clear translation queue
+      // 2. Reset every pending item before clearing the queue. A page rescan may
+      // have removed an element from this.elements while it was still queued.
+      const pendingElements = new Set([...this.queue, ...this.elements]);
       this.queue = [];
-
-      // 3. Reset uncompleted queued items to idle and clean temporary loading shimmer
-      for (const el of this.elements) {
+      for (const el of pendingElements) {
         const info = this.elementStateMap.get(el);
         if (info && info.state === 'queued') {
           info.state = 'idle';
@@ -1370,7 +1443,7 @@
         }
       }
 
-      // 4. Hide all translation elements
+      // 3. Hide all translation elements
       this.applyDisplayModeToAll();
       this.updateCapsuleStats();
     }
@@ -1403,6 +1476,7 @@
     }
 
     enqueueElement(el) {
+      if (this.mode === 'original') return;
       const info = this.elementStateMap.get(el) || { state: 'idle' };
       if (info.state !== 'idle') return;
 
