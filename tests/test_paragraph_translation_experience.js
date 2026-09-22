@@ -971,10 +971,15 @@ function createMutableClassList(element, initial = '') {
 }
 
 function createTranslationViewNode(className = '') {
+  const customProperties = new Map();
   const node = {
     _className: '',
     innerHTML: '',
-    style: {},
+    style: {
+      display: '',
+      setProperty(name, value) { customProperties.set(name, value); },
+      getPropertyValue(name) { return customProperties.get(name) || ''; }
+    },
     parentNode: null,
     removed: false,
     retryButton: null,
@@ -1092,6 +1097,7 @@ test('paired translation CSS uses the approved restrained green scheme', () => {
   const css = fs.readFileSync(path.join(__dirname, '../extension/bilingual.css'), 'utf8');
   const block = getCssRuleBody(css, '.pd-bilingual-trans');
   const label = getCssRuleBody(css, '.pd-translation-label');
+  const content = getCssRuleBody(css, '.pd-translation-content');
 
   assert.match(block, /margin:\s*6px 0 18px\s*!important/);
   assert.match(block, /padding:\s*4px 0 4px 12px\s*!important/);
@@ -1104,10 +1110,67 @@ test('paired translation CSS uses the approved restrained green scheme', () => {
   assert.match(label, /font-weight:\s*700\s*!important/);
   assert.match(label, /color:\s*#1c7c54\s*!important/i);
   assert.match(label, /letter-spacing:\s*0\s*!important/);
+  assert.match(content, /font-family:\s*var\(--pd-source-font-family,\s*inherit\)\s*!important/);
+  assert.match(content, /font-size:\s*var\(--pd-source-font-size,\s*inherit\)\s*!important/);
+  assert.match(content, /font-weight:\s*var\(--pd-source-font-weight,\s*inherit\)\s*!important/);
+  assert.match(content, /line-height:\s*var\(--pd-source-line-height,\s*inherit\)\s*!important/);
 
   const chineseBlock = getCssRuleBody(css, 'html[data-paperdict-mode="chinese"] .pd-bilingual-trans');
   assert.doesNotMatch(chineseBlock, /border-left:\s*none/);
-  assert.doesNotMatch(chineseBlock, /font-size|line-height|font-family/);
+});
+
+test('translation blocks preserve distinct computed heading and paragraph typography', () => {
+  const previousWindow = global.window;
+  try {
+    global.window = {
+      getComputedStyle(source) {
+        return source.tagName === 'H1'
+          ? {
+              fontFamily: 'Georgia',
+              fontSize: '32px',
+              fontWeight: '700',
+              lineHeight: '40px',
+              fontStyle: 'normal',
+              textAlign: 'left'
+            }
+          : {
+              fontFamily: 'Arial',
+              fontSize: '16px',
+              fontWeight: '400',
+              lineHeight: '24px',
+              fontStyle: 'italic',
+              textAlign: 'justify'
+            };
+      }
+    };
+    withTranslationViewDom(() => {
+      const heading = createTranslationViewHarness();
+      const paragraph = createTranslationViewHarness();
+      heading.source.tagName = 'H1';
+      paragraph.source.tagName = 'P';
+      const manager = new PaperBilingualManager();
+      manager.mode = 'chinese';
+      const headingInfo = { state: 'done', transEl: null };
+      const paragraphInfo = { state: 'done', transEl: null };
+
+      manager.renderTranslation(heading.source, headingInfo, '标题译文');
+      manager.renderTranslation(paragraph.source, paragraphInfo, '段落译文');
+
+      assert.equal(headingInfo.transEl.style.getPropertyValue('--pd-source-font-family'), 'Georgia');
+      assert.equal(headingInfo.transEl.style.getPropertyValue('--pd-source-font-size'), '32px');
+      assert.equal(headingInfo.transEl.style.getPropertyValue('--pd-source-font-weight'), '700');
+      assert.equal(headingInfo.transEl.style.getPropertyValue('--pd-source-line-height'), '40px');
+      assert.equal(paragraphInfo.transEl.style.getPropertyValue('--pd-source-font-family'), 'Arial');
+      assert.equal(paragraphInfo.transEl.style.getPropertyValue('--pd-source-font-size'), '16px');
+      assert.equal(paragraphInfo.transEl.style.getPropertyValue('--pd-source-font-weight'), '400');
+      assert.equal(paragraphInfo.transEl.style.getPropertyValue('--pd-source-line-height'), '24px');
+      assert.equal(paragraphInfo.transEl.style.getPropertyValue('--pd-source-font-style'), 'italic');
+      assert.equal(paragraphInfo.transEl.style.getPropertyValue('--pd-source-text-align'), 'justify');
+    });
+  } finally {
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+  }
 });
 
 test('Chinese mode hides only a done source with a real translation block', () => {
@@ -1225,6 +1288,7 @@ test('rejected paragraph requests become retryable errors without blocking later
 test('loading placeholder reuses an existing generated error node', () => {
   withTranslationViewDom(() => {
     const { container, source } = createTranslationViewHarness();
+    source.classList.add('pd-orig-hidden');
     const errorNode = createTranslationViewNode('pd-bilingual-error');
     errorNode.innerHTML = '<button class="pd-translation-retry">重试</button>';
     errorNode.style.display = 'none';
@@ -1238,7 +1302,50 @@ test('loading placeholder reuses an existing generated error node', () => {
     assert.equal(errorNode.className, 'pd-bilingual-loading');
     assert.match(errorNode.innerHTML, /pd-loading-spinner/);
     assert.equal(errorNode.style.display, 'block');
+    assert.equal(source.classList.contains('pd-orig-hidden'), false);
     assert.equal(container.children.filter((node) => node !== source).length, 1);
+  });
+});
+
+test('Chinese config invalidation reveals a done source while its replacement is loading', () => {
+  return withTranslationViewDom(async () => {
+    const { container, source } = createTranslationViewHarness();
+    const completedNode = createTranslationViewNode('pd-bilingual-trans');
+    container.appendChild(completedNode);
+    source.classList.add('pd-orig-hidden');
+    const deferred = createDeferred();
+    const manager = new PaperBilingualManager();
+    manager.mode = 'chinese';
+    manager.maxConcurrency = 1;
+    manager.formulaProtector = {
+      protect: (element) => ({ protectedText: element.innerText, tokenMap: new Map() }),
+      restore: (translation) => translation,
+      escapeHtml: (value) => String(value)
+    };
+    manager.requestTranslation = () => deferred.promise;
+    manager.updateCapsuleStats = () => {};
+    manager.elements = [source];
+    manager.registeredElements.add(source);
+    manager.trackedElements.add(source);
+    const info = {
+      state: 'done',
+      transEl: completedNode,
+      requestId: 1,
+      requestGeneration: 0,
+      requestEntry: null
+    };
+    manager.elementStateMap.set(source, info);
+
+    manager.invalidateTranslationConfig();
+
+    assert.equal(info.state, 'translating');
+    assert.equal(info.transEl.classList.contains('pd-bilingual-loading'), true);
+    assert.equal(info.transEl.style.display, 'block');
+    assert.equal(source.classList.contains('pd-orig-hidden'), false);
+
+    deferred.resolve({ success: true, translation: '更新后的译文' });
+    await flushSchedulingPromises();
+    assert.equal(info.state, 'done');
   });
 });
 

@@ -1252,6 +1252,9 @@
         info.state = 'idle';
         if (requestEntry && !wasTranslating) this.releaseRequestEntry(null, requestEntry);
         this.removeTranslationNode(info);
+        if (el.classList && typeof el.classList.remove === 'function') {
+          el.classList.remove('pd-orig-hidden');
+        }
         if (this.mode !== 'original' && this.isElementActive(el)) elementsToReschedule.push(el);
       }
 
@@ -1728,6 +1731,7 @@
         }
         if (info.transEl) {
           info.transEl.style.display = this.mode === 'original' ? 'none' : 'block';
+          if (hasTranslation) this.syncSourceTypography(el, info.transEl);
         }
       }
     }
@@ -1755,6 +1759,9 @@
       placeholder.className = 'pd-bilingual-loading';
       placeholder.innerHTML = `<span class="pd-loading-spinner"></span><span>正在就地速译...</span>`;
       placeholder.style.display = 'block';
+      if (el.classList && typeof el.classList.remove === 'function') {
+        el.classList.remove('pd-orig-hidden');
+      }
 
       // Insert immediately following the original element
       if (!placeholder.parentNode) {
@@ -1910,6 +1917,37 @@
       });
     }
 
+    syncSourceTypography(el, transEl) {
+      if (
+        !el || !transEl || !transEl.style ||
+        typeof transEl.style.setProperty !== 'function' ||
+        typeof window === 'undefined' || typeof window.getComputedStyle !== 'function'
+      ) {
+        return;
+      }
+
+      let sourceStyle;
+      try {
+        sourceStyle = window.getComputedStyle(el);
+      } catch (error) {
+        return;
+      }
+      if (!sourceStyle) return;
+
+      const typographyProperties = [
+        ['--pd-source-font-family', 'fontFamily'],
+        ['--pd-source-font-size', 'fontSize'],
+        ['--pd-source-font-weight', 'fontWeight'],
+        ['--pd-source-line-height', 'lineHeight'],
+        ['--pd-source-font-style', 'fontStyle'],
+        ['--pd-source-text-align', 'textAlign']
+      ];
+      for (const [customProperty, styleProperty] of typographyProperties) {
+        const value = String(sourceStyle[styleProperty] || '').trim();
+        if (value) transEl.style.setProperty(customProperty, value);
+      }
+    }
+
     renderTranslation(el, info, transHtml) {
       if (!info.transEl || !info.transEl.parentNode) {
         const transNode = document.createElement('div');
@@ -1924,6 +1962,7 @@
         info.transEl.className = 'pd-bilingual-trans';
       }
 
+      this.syncSourceTypography(el, info.transEl);
       info.transEl.innerHTML = `<div class="pd-translation-label">译文</div><div class="pd-translation-content">${transHtml}</div>`;
 
       if (this.mode === 'chinese') {

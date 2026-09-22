@@ -29,7 +29,12 @@
 
 .pd-translation-content {
   color: inherit !important;
-  font: inherit !important;
+  font-family: var(--pd-source-font-family, inherit) !important;
+  font-size: var(--pd-source-font-size, inherit) !important;
+  font-weight: var(--pd-source-font-weight, inherit) !important;
+  line-height: var(--pd-source-line-height, inherit) !important;
+  font-style: var(--pd-source-font-style, inherit) !important;
+  text-align: var(--pd-source-text-align, inherit) !important;
   letter-spacing: 0 !important;
 }
 
