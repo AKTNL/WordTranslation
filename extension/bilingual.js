@@ -1074,6 +1074,8 @@
       this.observer = null;
       this.observedElements = new WeakSet();
       this.mutationObserver = null;
+      this.nextRequestId = 0;
+      this.inFlightTranslations = new Map();
 
       this.queue = [];
       this.activeRequests = 0;
@@ -1265,8 +1267,9 @@
               this.observer.unobserve(el);
             }
             this.observedElements.delete(el);
+            if (!this.isElementActive(el)) continue;
             const state = this.elementStateMap.get(el);
-            if (!state || state.state === 'idle') {
+            if (state && state.state === 'idle') {
               this.enqueueElement(el);
             }
           }
@@ -1288,8 +1291,84 @@
         rect.right > 0 && rect.left < window.innerWidth;
     }
 
+    isElementActive(el) {
+      return Boolean(el) && el.isConnected !== false && this.registeredElements.has(el);
+    }
+
+    isRequestCurrent(el, info, requestId) {
+      return this.mode !== 'original' && this.isElementActive(el) &&
+        this.elementStateMap.get(el) === info && info.requestId === requestId;
+    }
+
+    removeTranslationNode(info) {
+      if (!info || !info.transEl) return;
+      if (typeof info.transEl.remove === 'function') info.transEl.remove();
+      info.transEl = null;
+    }
+
+    unregisterElement(el) {
+      if (!el) return false;
+      const wasRegistered = this.registeredElements.delete(el);
+      this.observedElements.delete(el);
+      if (this.observer && typeof this.observer.unobserve === 'function') {
+        this.observer.unobserve(el);
+      }
+      this.queue = this.queue.filter((queued) => queued !== el);
+      if (wasRegistered) this.elements = this.elements.filter((registered) => registered !== el);
+
+      const info = this.elementStateMap.get(el);
+      if (info) {
+        info.requestId = null;
+        info.state = 'idle';
+        this.removeTranslationNode(info);
+        this.elementStateMap.delete(el);
+      }
+      if (el.classList && typeof el.classList.remove === 'function') {
+        el.classList.remove('pd-orig-hidden');
+      }
+      return wasRegistered;
+    }
+
+    isWithinSubtree(el, root) {
+      if (!el || !root) return false;
+      if (el === root) return true;
+      if (typeof root.contains === 'function') return root.contains(el);
+      let current = el.parentElement;
+      while (current) {
+        if (current === root) return true;
+        current = current.parentElement;
+      }
+      return false;
+    }
+
+    unregisterSubtree(root) {
+      let changed = false;
+      for (const el of [...this.elements]) {
+        if (this.isWithinSubtree(el, root)) changed = this.unregisterElement(el) || changed;
+      }
+      return changed;
+    }
+
+    reconcileCandidateAncestors(el) {
+      let ancestor = el && el.parentElement;
+      while (ancestor) {
+        if (
+          this.registeredElements.has(ancestor) &&
+          String(ancestor.tagName || '').toUpperCase() === 'DIV'
+        ) {
+          this.unregisterElement(ancestor);
+        }
+        ancestor = ancestor.parentElement;
+      }
+    }
+
     registerElement(el, options = {}) {
-      if (!el || (!options.knownEligible && !this.filter.isEligible(el))) return false;
+      if (
+        !el || el.isConnected === false ||
+        (!options.knownEligible && !this.filter.isEligible(el))
+      ) {
+        return false;
+      }
 
       let info = this.elementStateMap.get(el);
       if (!info) {
@@ -1319,15 +1398,56 @@
       for (const el of elements || []) this.registerElement(el, options);
     }
 
+    registerMutationRoot(root, includeDescendants = false) {
+      if (!root || !root.tagName || root.isConnected === false || this.filter.isExcluded(root)) return false;
+      const candidates = [];
+      if (this.filter.isEligible(root)) candidates.push(root);
+      if (includeDescendants) candidates.push(...this.filter.findContentElements(root));
+
+      let changed = false;
+      for (const candidate of new Set(candidates)) {
+        if (!candidate || candidate.isConnected === false) continue;
+        this.reconcileCandidateAncestors(candidate);
+        changed = this.registerElement(candidate, { knownEligible: true }) || changed;
+      }
+      return changed;
+    }
+
+    getMutationElement(node) {
+      if (!node) return null;
+      if (node.nodeType === 1 || node.tagName) return node;
+      if (node.nodeType === 3) return node.parentElement || node.parentNode || null;
+      return null;
+    }
+
     setupMutationObserver() {
       if (this.mutationObserver || typeof MutationObserver === 'undefined') return;
       this.mutationObserver = new MutationObserver((records) => {
         if (this.mode === 'original') return;
         for (const record of records) {
+          let refreshTarget = record.type === 'characterData';
+
+          for (const node of record.removedNodes || []) {
+            const removedElement = this.getMutationElement(node);
+            if (removedElement && (node.nodeType === 1 || node.tagName)) {
+              this.unregisterSubtree(removedElement);
+            }
+            if (!removedElement || this.filter.isExcluded(removedElement)) continue;
+            refreshTarget = true;
+          }
+
           for (const node of record.addedNodes || []) {
-            if (!node || node.nodeType !== 1 || this.filter.isExcluded(node)) continue;
-            this.registerElement(node);
-            this.registerElements(this.filter.findContentElements(node), { knownEligible: true });
+            const addedElement = this.getMutationElement(node);
+            if (!addedElement || this.filter.isExcluded(addedElement)) continue;
+            this.registerMutationRoot(addedElement, node.nodeType === 1 || Boolean(node.tagName));
+            refreshTarget = true;
+          }
+
+          if (record.type === 'characterData') {
+            const hydratedElement = this.getMutationElement(record.target);
+            this.registerMutationRoot(hydratedElement, false);
+          } else if (refreshTarget) {
+            this.registerMutationRoot(this.getMutationElement(record.target), false);
           }
         }
         this.applyDisplayModeToAll();
@@ -1341,7 +1461,11 @@
       const target = document.body || document.documentElement;
       if (!target) return;
       this.mutationObserver.disconnect();
-      this.mutationObserver.observe(target, { childList: true, subtree: true });
+      this.mutationObserver.observe(target, {
+        childList: true,
+        characterData: true,
+        subtree: true
+      });
     }
 
     /**
@@ -1476,8 +1600,9 @@
     }
 
     enqueueElement(el) {
-      if (this.mode === 'original') return;
-      const info = this.elementStateMap.get(el) || { state: 'idle' };
+      if (this.mode === 'original' || !this.isElementActive(el)) return;
+      const info = this.elementStateMap.get(el);
+      if (!info) return;
       if (info.state !== 'idle') return;
 
       info.state = 'queued';
@@ -1509,17 +1634,24 @@
     async processQueue() {
       if (this.mode === 'original') return;
       if (this.activeRequests >= this.maxConcurrency) return;
-      if (this.queue.length === 0) return;
-
-      const el = this.queue.shift();
-      const info = this.elementStateMap.get(el);
-      if (!info) return;
+      let el = null;
+      let info = null;
+      while (this.queue.length > 0 && !el) {
+        const candidate = this.queue.shift();
+        const candidateInfo = this.elementStateMap.get(candidate);
+        if (!this.isElementActive(candidate) || !candidateInfo || candidateInfo.state !== 'queued') continue;
+        el = candidate;
+        info = candidateInfo;
+      }
+      if (!el || !info) return;
 
       info.state = 'translating';
+      const requestId = ++this.nextRequestId;
+      info.requestId = requestId;
       this.activeRequests++;
 
       try {
-        await this.translateElement(el, info);
+        await this.translateElement(el, info, requestId);
       } catch (err) {
         console.warn('Paragraph translation error:', err);
       } finally {
@@ -1533,7 +1665,8 @@
     /**
      * Translates a single academic paragraph with formula protection & caching
      */
-    async translateElement(el, info) {
+    async translateElement(el, info, requestId) {
+      if (!this.isRequestCurrent(el, info, requestId)) return;
       const rawText = (el.innerText || el.textContent || '').trim();
       if (!rawText) {
         info.state = 'done';
@@ -1544,6 +1677,7 @@
       // Check cache first
       if (this.cache.has(rawText)) {
         const cachedTrans = this.cache.get(rawText);
+        if (!this.isRequestCurrent(el, info, requestId)) return;
         this.renderTranslation(el, info, cachedTrans);
         info.state = 'done';
         return;
@@ -1552,16 +1686,31 @@
       // Protect math formulas and structure
       const { protectedText, tokenMap } = this.formulaProtector.protect(el);
 
-      // Perform online translation via background Service Worker
-      const response = await this.requestTranslation(protectedText);
+      if (!this.isRequestCurrent(el, info, requestId)) return;
+      const requestKey = protectedText;
+      let request = this.inFlightTranslations.get(requestKey);
+      if (!request) {
+        request = Promise.resolve(this.requestTranslation(protectedText));
+        this.inFlightTranslations.set(requestKey, request);
+      }
+      let response;
+      try {
+        response = await request;
+      } finally {
+        if (this.inFlightTranslations.get(requestKey) === request) {
+          this.inFlightTranslations.delete(requestKey);
+        }
+      }
 
       if (response && response.success && response.translation) {
         // Restore protected formulas
         const restoredHtml = this.formulaProtector.restore(response.translation, tokenMap);
         this.cache.set(rawText, restoredHtml);
+        if (!this.isRequestCurrent(el, info, requestId)) return;
         this.renderTranslation(el, info, restoredHtml);
         info.state = 'done';
       } else {
+        if (!this.isRequestCurrent(el, info, requestId)) return;
         // Translation failed
         if (info.transEl) {
           const errMsg = response?.error || '网络超时';

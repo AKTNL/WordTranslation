@@ -873,20 +873,30 @@ function withSchedulingDom(options, run) {
     delete global.MutationObserver;
   }
 
-  try {
-    return run({ body, documentElement });
-  } finally {
+  const restore = () => {
     for (const [name, value] of Object.entries(previous)) {
       if (value === undefined) delete global[name];
       else global[name] = value;
     }
+  };
+
+  try {
+    const result = run({ body, documentElement });
+    if (result && typeof result.then === 'function') return result.finally(restore);
+    restore();
+    return result;
+  } catch (error) {
+    restore();
+    throw error;
   }
 }
 
 function makeSchedulingElement(top = 20, bottom = 80, left = 10, right = 210, options = {}) {
   const element = createAcademicElement(
     options.tagName || 'P',
-    options.text || 'This academic paragraph is long enough to enter the translation queue.',
+    Object.prototype.hasOwnProperty.call(options, 'text')
+      ? options.text
+      : 'This academic paragraph is long enough to enter the translation queue.',
     options
   );
   element.nodeType = 1;
@@ -939,6 +949,19 @@ function silenceTranslationPipeline(manager) {
   manager.renderLoadingPlaceholder = () => {};
   manager.applyDisplayModeToAll = () => {};
   manager.updateCapsuleStats = () => {};
+}
+
+function createTranslationNodeDouble(className = 'pd-bilingual-loading') {
+  return {
+    classList: createAcademicClassList(className),
+    removed: false,
+    remove() { this.removed = true; }
+  };
+}
+
+async function flushSchedulingPromises() {
+  await new Promise((resolve) => setImmediate(resolve));
+  await Promise.resolve();
 }
 
 test('viewport scheduling uses strict rectangle overlap with both window dimensions', () => {
@@ -1049,6 +1072,150 @@ test('dynamic content registers the added element and descendants by viewport', 
   });
 });
 
+test('text hydration registers an initially empty paragraph exactly once', () => {
+  const mutation = createObserverDouble();
+  withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, ({ body }) => {
+    const paragraph = makeSchedulingElement(20, 80, 10, 210, { text: '' });
+    body.appendChild(paragraph);
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.processQueue = () => {};
+    manager.renderLoadingPlaceholder = () => {};
+    manager.applyDisplayModeToAll = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.observeContentChanges();
+
+    mutation.instances[0].emit([{
+      type: 'childList',
+      target: body,
+      addedNodes: [paragraph],
+      removedNodes: []
+    }]);
+    assert.deepEqual(manager.queue, []);
+
+    paragraph.innerText = 'Hydrated academic prose now contains enough English text for translation.';
+    const textNode = { nodeType: 3, parentElement: paragraph, parentNode: paragraph };
+    mutation.instances[0].emit([{
+      type: 'childList',
+      target: paragraph,
+      addedNodes: [textNode],
+      removedNodes: []
+    }]);
+    mutation.instances[0].emit([{ type: 'characterData', target: textNode }]);
+
+    assert.deepEqual(manager.elements, [paragraph]);
+    assert.deepEqual(manager.queue, [paragraph]);
+    assert.equal(manager.elementStateMap.get(paragraph).state, 'queued');
+    assert.equal(mutation.instances[0].observeCalls[0].options.characterData, true);
+  });
+});
+
+test('adding a specific child replaces a queued aggregate paragraph', () => {
+  const mutation = createObserverDouble();
+  withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, ({ body }) => {
+    const text = 'This staged paragraph becomes a specific child without changing its academic text.';
+    const aggregate = makeSchedulingElement(20, 80, 10, 210, {
+      tagName: 'DIV',
+      role: 'paragraph',
+      text
+    });
+    body.appendChild(aggregate);
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.processQueue = () => {};
+    manager.renderLoadingPlaceholder = (element, info) => {
+      info.transEl = createTranslationNodeDouble();
+    };
+    manager.applyDisplayModeToAll = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.observeContentChanges();
+    manager.registerElement(aggregate);
+    const aggregateInfo = manager.elementStateMap.get(aggregate);
+    const loadingNode = aggregateInfo.transEl;
+
+    aggregate.innerText = '';
+    const child = aggregate.appendChild(makeSchedulingElement(20, 80, 10, 210, { text }));
+    mutation.instances[0].emit([{
+      type: 'childList',
+      target: aggregate,
+      addedNodes: [child],
+      removedNodes: []
+    }]);
+
+    assert.deepEqual(manager.elements, [child]);
+    assert.deepEqual(manager.queue, [child]);
+    assert.equal(manager.registeredElements.has(aggregate), false);
+    assert.equal(manager.elementStateMap.has(aggregate), false);
+    assert.equal(loadingNode.removed, true);
+    assert.equal(aggregateInfo.requestId, null);
+  });
+});
+
+test('in-flight aggregate replacement shares its request and renders only the child', () => {
+  const mutation = createObserverDouble();
+  return withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, async ({ body }) => {
+    const text = 'This staged paragraph is hydrated into a specific child while translation is pending.';
+    const aggregate = makeSchedulingElement(20, 80, 10, 210, {
+      tagName: 'DIV',
+      role: 'paragraph',
+      text
+    });
+    body.appendChild(aggregate);
+    const deferred = createDeferred();
+    const requests = [];
+    const renders = [];
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.formulaProtector = {
+      protect: (element) => ({
+        protectedText: (element.innerText || element.textContent || '').trim(),
+        tokenMap: new Map()
+      }),
+      restore: (translation) => translation,
+      escapeHtml: (value) => value
+    };
+    manager.renderLoadingPlaceholder = (element, info) => {
+      info.transEl = createTranslationNodeDouble();
+    };
+    manager.requestTranslation = (requestText) => {
+      requests.push(requestText);
+      return deferred.promise;
+    };
+    manager.renderTranslation = (element, info, translation) => {
+      renders.push({ element, translation });
+    };
+    manager.applyDisplayModeToAll = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.observeContentChanges();
+    manager.registerElement(aggregate);
+    const aggregateInfo = manager.elementStateMap.get(aggregate);
+    const aggregateLoading = aggregateInfo.transEl;
+    assert.equal(aggregateInfo.state, 'translating');
+    assert.deepEqual(requests, [text]);
+
+    aggregate.innerText = '';
+    const child = aggregate.appendChild(makeSchedulingElement(20, 80, 10, 210, { text }));
+    mutation.instances[0].emit([{
+      type: 'childList',
+      target: aggregate,
+      addedNodes: [child],
+      removedNodes: []
+    }]);
+
+    assert.equal(manager.registeredElements.has(aggregate), false);
+    assert.equal(aggregateLoading.removed, true);
+    assert.deepEqual(requests, [text]);
+
+    deferred.resolve({ success: true, translation: 'translated child' });
+    await flushSchedulingPromises();
+
+    assert.deepEqual(requests, [text]);
+    assert.deepEqual(renders, [{ element: child, translation: 'translated child' }]);
+    assert.equal(manager.elementStateMap.get(child).state, 'done');
+    assert.deepEqual(manager.elements, [child]);
+  });
+});
+
 test('dynamic observation ignores generated nodes and excluded subtrees without rescanning them', () => {
   const mutation = createObserverDouble();
   withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, ({ body }) => {
@@ -1070,6 +1237,7 @@ test('dynamic observation ignores generated nodes and excluded subtrees without 
     manager.mode = 'bilingual';
     manager.filter = {
       isExcluded: academicFilter.isExcluded.bind(academicFilter),
+      isEligible: () => false,
       findContentElements(node) {
         scanned.push(node);
         return [];
@@ -1080,9 +1248,133 @@ test('dynamic observation ignores generated nodes and excluded subtrees without 
     manager.observeContentChanges();
 
     mutation.instances[0].emit([{ addedNodes: [...generated, excluded] }]);
+    const generatedText = { nodeType: 3, parentElement: generated[0], parentNode: generated[0] };
+    mutation.instances[0].emit([{ type: 'characterData', target: generatedText }]);
+    mutation.instances[0].emit([{
+      type: 'childList',
+      target: body,
+      addedNodes: [],
+      removedNodes: [generated[1]]
+    }]);
 
     assert.deepEqual(registered, []);
     assert.deepEqual(scanned, []);
+  });
+});
+
+test('removing a queued paragraph drops all strong scheduling references before dispatch', () => {
+  const mutation = createObserverDouble();
+  return withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, async ({ body }) => {
+    const wrapper = body.appendChild(createAcademicElement('SECTION', ''));
+    wrapper.nodeType = 1;
+    const paragraph = wrapper.appendChild(makeSchedulingElement());
+    const unobserved = [];
+    const requests = [];
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.observer = {
+      observe() {},
+      unobserve: (element) => unobserved.push(element),
+      disconnect() {}
+    };
+    manager.processQueue = () => {};
+    manager.renderLoadingPlaceholder = (element, info) => {
+      info.transEl = createTranslationNodeDouble();
+    };
+    manager.requestTranslation = (text) => {
+      requests.push(text);
+      return Promise.resolve({ success: true, translation: 'unused' });
+    };
+    manager.renderTranslation = () => {};
+    manager.applyDisplayModeToAll = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.observeContentChanges();
+    manager.registerElement(paragraph);
+    const info = manager.elementStateMap.get(paragraph);
+    const loadingNode = info.transEl;
+    assert.deepEqual(manager.queue, [paragraph]);
+
+    wrapper.isConnected = false;
+    paragraph.isConnected = false;
+    body.children = body.children.filter((child) => child !== wrapper);
+    wrapper.parentElement = null;
+    mutation.instances[0].emit([{
+      type: 'childList',
+      target: body,
+      addedNodes: [],
+      removedNodes: [wrapper]
+    }]);
+
+    await PaperBilingualManager.prototype.processQueue.call(manager);
+    assert.deepEqual(requests, []);
+    assert.deepEqual(manager.queue, []);
+    assert.deepEqual(manager.elements, []);
+    assert.equal(manager.registeredElements.has(paragraph), false);
+    assert.equal(manager.elementStateMap.has(paragraph), false);
+    assert.equal(info.requestId, null);
+    assert.equal(loadingNode.removed, true);
+    assert(unobserved.includes(paragraph));
+  });
+});
+
+test('removing an in-flight paragraph prevents stale rendering and orphan nodes', () => {
+  const mutation = createObserverDouble();
+  return withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, async ({ body }) => {
+    const paragraph = body.appendChild(makeSchedulingElement());
+    const deferred = createDeferred();
+    const requests = [];
+    const renders = [];
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.formulaProtector = {
+      protect: (element) => ({
+        protectedText: (element.innerText || element.textContent || '').trim(),
+        tokenMap: new Map()
+      }),
+      restore: (translation) => translation,
+      escapeHtml: (value) => value
+    };
+    manager.renderLoadingPlaceholder = (element, info) => {
+      info.transEl = createTranslationNodeDouble();
+    };
+    manager.requestTranslation = (text) => {
+      requests.push(text);
+      return deferred.promise;
+    };
+    manager.renderTranslation = (element, info, translation) => {
+      renders.push({ element, translation });
+    };
+    manager.applyDisplayModeToAll = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.observeContentChanges();
+    manager.registerElement(paragraph);
+    const info = manager.elementStateMap.get(paragraph);
+    const loadingNode = info.transEl;
+    assert.equal(info.state, 'translating');
+    assert.equal(requests.length, 1);
+
+    paragraph.isConnected = false;
+    body.children = body.children.filter((child) => child !== paragraph);
+    paragraph.parentElement = null;
+    mutation.instances[0].emit([{
+      type: 'childList',
+      target: body,
+      addedNodes: [],
+      removedNodes: [paragraph]
+    }]);
+
+    assert.equal(manager.registeredElements.has(paragraph), false);
+    assert.equal(manager.elementStateMap.has(paragraph), false);
+    assert.equal(loadingNode.removed, true);
+    assert.equal(info.requestId, null);
+
+    deferred.resolve({ success: true, translation: 'stale translation' });
+    await flushSchedulingPromises();
+
+    assert.equal(requests.length, 1);
+    assert.deepEqual(renders, []);
+    assert.deepEqual(manager.elements, []);
+    assert.equal(manager.activeRequests, 0);
   });
 });
 
