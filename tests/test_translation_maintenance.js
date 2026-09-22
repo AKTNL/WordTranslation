@@ -3,7 +3,11 @@ const fs = require('fs');
 const path = require('path');
 
 const { DictService } = require('../extension/dict_service.js');
-const { AcademicFilter, PaperBilingualManager } = require('../extension/bilingual.js');
+const {
+  AcademicFilter,
+  PaperBilingualManager,
+  reattachExistingManager
+} = require('../extension/bilingual.js');
 const { GlossaryService } = require('../extension/glossary_service.js');
 
 const dictData = JSON.parse(
@@ -32,6 +36,8 @@ const contentJs = fs.readFileSync(path.join(__dirname, '../extension/content.js'
 const readerJs = fs.readFileSync(path.join(__dirname, '../extension/reader/reader.js'), 'utf8');
 const popupHtml = fs.readFileSync(path.join(__dirname, '../extension/popup/popup.html'), 'utf8');
 const popupJs = fs.readFileSync(path.join(__dirname, '../extension/popup/popup.js'), 'utf8');
+const bilingualJs = fs.readFileSync(path.join(__dirname, '../extension/bilingual.js'), 'utf8');
+const backgroundJs = fs.readFileSync(path.join(__dirname, '../extension/background.js'), 'utf8');
 
 test('rejects pure Chinese as an English source', () => {
   assert.equal(service.isEnglishSourceText('深度学习'), false);
@@ -191,6 +197,64 @@ test('popup exposes real API testing and glossary management controls', () => {
   assert.match(popupHtml, /id="user-glossary-list"/);
   assert.match(popupJs, /TEST_TRANSLATION_ENGINE/);
   assert.match(popupJs, /GlossaryService\.parse/);
+});
+
+test('popup recovers a missing content script and surfaces page connection errors', () => {
+  assert.match(popupHtml, /src="tab_bridge\.js"/);
+  assert.match(popupJs, /PaperDictTabBridge\.sendMessageWithRecovery/);
+  assert.match(popupJs, /setBilingualStatus\(error\.message/);
+});
+
+test('content-script recovery is idempotent and uses the complete dependency list', () => {
+  assert.match(bilingualJs, /reattachExistingManager\(global\.paperBilingualManager\)/);
+  assert.doesNotMatch(backgroundJs, /chrome\.scripting\.executeScript/);
+});
+
+test('bilingual runtime listener can be safely reattached', () => {
+  const listeners = new Set();
+  global.chrome = {
+    runtime: {
+      onMessage: {
+        addListener(listener) { listeners.add(listener); },
+        hasListener(listener) { return listeners.has(listener); }
+      }
+    }
+  };
+  const manager = new PaperBilingualManager();
+  manager.setupRuntimeListener();
+  manager.setupRuntimeListener();
+  assert.equal(listeners.size, 1);
+
+  listeners.clear();
+  manager.setupRuntimeListener();
+  assert.equal(listeners.size, 1);
+  delete global.chrome;
+});
+
+test('upgrades a legacy bilingual manager that lacks the new listener method', () => {
+  const listeners = new Set();
+  global.chrome = {
+    runtime: {
+      onMessage: {
+        addListener(listener) { listeners.add(listener); },
+        hasListener(listener) { return listeners.has(listener); }
+      }
+    }
+  };
+  const legacyManager = {
+    mode: 'original',
+    elements: [],
+    setMode(mode) { this.mode = mode; },
+    toggleMode() { this.mode = 'bilingual'; },
+    getTranslatedCount() { return 0; }
+  };
+
+  assert.equal(reattachExistingManager(legacyManager), true);
+  assert.equal(listeners.size, 1);
+  let response;
+  Array.from(listeners)[0]({ type: 'GET_BILINGUAL_MODE' }, {}, (value) => { response = value; });
+  assert.deepEqual(response, { mode: 'original', total: 0, translated: 0 });
+  delete global.chrome;
 });
 
 console.log(`\nResults: ${passed} passed, ${failed} failed`);

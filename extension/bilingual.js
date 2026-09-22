@@ -809,6 +809,8 @@
       this.onlineFallback = true;
       this.isBlacklisted = false;
       this.capsuleEnabled = true;
+      this.runtimeMessageListener = null;
+      this.runtimeListenerAttached = false;
     }
 
     init() {
@@ -824,9 +826,14 @@
       // Setup Keyboard Shortcut Alt+B
       this.setupShortcut();
 
-      // Listen for runtime messages (from Popup or Context Menu)
-      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-        chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      this.setupRuntimeListener();
+    }
+
+    setupRuntimeListener() {
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.onMessage) return;
+      const onMessage = chrome.runtime.onMessage;
+      if (!this.runtimeMessageListener) {
+        this.runtimeMessageListener = (msg, sender, sendResponse) => {
           if (msg.type === 'SET_BILINGUAL_MODE') {
             this.setMode(msg.mode);
             sendResponse({ success: true, mode: this.mode });
@@ -845,8 +852,16 @@
             sendResponse({ success: true, mode: this.mode });
             return true;
           }
-        });
+        };
       }
+
+      if (typeof onMessage.hasListener === 'function') {
+        if (onMessage.hasListener(this.runtimeMessageListener)) return;
+      } else if (this.runtimeListenerAttached) {
+        return;
+      }
+      onMessage.addListener(this.runtimeMessageListener);
+      this.runtimeListenerAttached = true;
     }
 
     initCapsule() {
@@ -1318,12 +1333,19 @@
     }
   }
 
+  function reattachExistingManager(manager) {
+    if (!manager) return false;
+    PaperBilingualManager.prototype.setupRuntimeListener.call(manager);
+    return true;
+  }
+
   // Export for browser and Node.js testing
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       FormulaProtector,
       AcademicFilter,
-      PaperBilingualManager
+      PaperBilingualManager,
+      reattachExistingManager
     };
   } else {
     global.PaperBilingualManager = PaperBilingualManager;
@@ -1343,6 +1365,11 @@
         window.location.href.includes('reader/reader.html')
       );
       if (isReaderPage) {
+        return;
+      }
+
+      if (global.paperBilingualManager) {
+        reattachExistingManager(global.paperBilingualManager);
         return;
       }
 

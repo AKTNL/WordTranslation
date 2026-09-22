@@ -62,7 +62,7 @@
 
   class TranslationService {
     constructor(options = {}) {
-      this.fetchImpl = options.fetchImpl || global.fetch;
+      this.fetchImpl = options.fetchImpl || global.fetch.bind(global);
       this.timeoutMs = options.timeoutMs || 10000;
     }
 

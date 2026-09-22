@@ -220,16 +220,42 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Check active tab bilingual status
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs && tabs[0] && tabs[0].id) {
-      chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_BILINGUAL_MODE' }, (res) => {
-        if (!chrome.runtime.lastError && res && res.mode) {
-          updatePopupBilingualUI(res.mode, res.total, res.translated);
-        }
+  function getActiveTab() {
+    return new Promise((resolve, reject) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs && tabs[0];
+        if (tab && tab.id) resolve(tab);
+        else reject(new Error('未找到可用的当前标签页'));
       });
+    });
+  }
+
+  function setBilingualStatus(message, type = '') {
+    if (!bilingualStatusText) return;
+    bilingualStatusText.textContent = message;
+    const status = bilingualStatusText.parentElement;
+    if (status) {
+      status.classList.toggle('pending', type === 'pending');
+      status.classList.toggle('error', type === 'error');
     }
-  });
+  }
+
+  async function sendBilingualMessage(tab, message) {
+    return window.PaperDictTabBridge.sendMessageWithRecovery(chrome, tab, message);
+  }
+
+  // Check the active tab and reconnect content scripts after an extension reload.
+  (async () => {
+    try {
+      const tab = await getActiveTab();
+      const response = await sendBilingualMessage(tab, { type: 'GET_BILINGUAL_MODE' });
+      if (response && response.mode) {
+        updatePopupBilingualUI(response.mode, response.total, response.translated);
+      }
+    } catch (error) {
+      setBilingualStatus(error.message || '扩展未能连接当前页面', 'error');
+    }
+  })();
 
   function updatePopupBilingualUI(mode, total, translated) {
     if (btnPopupOrig) btnPopupOrig.classList.toggle('active', mode === 'original');
@@ -238,26 +264,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (bilingualStatusText) {
       if (mode === 'bilingual') {
-        bilingualStatusText.textContent = total ? `双语对照就绪 (已译 ${translated || 0} / ${total} 段)` : '双语对照已激活';
+        setBilingualStatus(total ? `双语对照就绪 (已译 ${translated || 0} / ${total} 段)` : '双语对照已激活');
       } else if (mode === 'chinese') {
-        bilingualStatusText.textContent = total ? `纯中文速读就绪 (已译 ${translated || 0} / ${total} 段)` : '纯中文速读已激活';
+        setBilingualStatus(total ? `纯中文速读就绪 (已译 ${translated || 0} / ${total} 段)` : '纯中文速读已激活');
       } else {
-        bilingualStatusText.textContent = '当前为原版英文排版';
+        setBilingualStatus('当前为原版英文排版');
       }
     }
   }
 
-  function setTabBilingualMode(mode) {
-    updatePopupBilingualUI(mode);
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs && tabs[0] && tabs[0].id) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: 'SET_BILINGUAL_MODE', mode }, (res) => {
-          if (res && res.mode) {
-            updatePopupBilingualUI(res.mode);
-          }
-        });
-      }
-    });
+  async function setTabBilingualMode(mode) {
+    setBilingualStatus('正在连接当前页面...', 'pending');
+    try {
+      const tab = await getActiveTab();
+      const response = await sendBilingualMessage(tab, { type: 'SET_BILINGUAL_MODE', mode });
+      if (!response || !response.mode) throw new Error('当前页面未确认模式切换');
+      updatePopupBilingualUI(response.mode, response.total, response.translated);
+    } catch (error) {
+      setBilingualStatus(error.message || '切换失败，请刷新页面后重试', 'error');
+    }
   }
 
   if (btnPopupOrig) btnPopupOrig.addEventListener('click', () => setTabBilingualMode('original'));

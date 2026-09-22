@@ -3,7 +3,7 @@
   "version": "2.2.0",
   "description": "PaperDict - 专为阅读英文学术论文打造的轻量级划词翻译与就地双语速读浏览器扩展",
   "scripts": {
-    "test": "node tests/test_extension.js && node tests/test_translation_maintenance.js && node tests/test_translation_engines.js",
+    "test": "node tests/test_extension.js && node tests/test_translation_maintenance.js && node tests/test_translation_engines.js && node tests/test_tab_bridge.js",
     "test:diagnostics": "node tests/test_full_diagnostics.js",
     "test:online": "node tests/test_translation.js"
   },

@@ -437,6 +437,18 @@ body {
   background: #3b82f6;
 }
 
+.bilingual-tab-status.pending .status-dot {
+  background: #d97706;
+}
+
+.bilingual-tab-status.error {
+  color: #dc2626;
+}
+
+.bilingual-tab-status.error .status-dot {
+  background: #dc2626;
+}
+
 /* Settings Section */
 .settings-section {
   padding: 12px 16px;

@@ -103,6 +103,23 @@ async function run() {
     assert.equal(result.code, 'RATE_LIMITED');
   });
 
+  await test('keeps the browser fetch receiver when no custom fetch is provided', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = async function browserFetch() {
+      if (this !== global) throw new TypeError('Illegal invocation');
+      return response(200, { responseData: { translatedText: '你好' } });
+    };
+
+    try {
+      const service = new TranslationService();
+      const result = await service.translate('hello', { engine: 'default' });
+      assert.equal(result.success, true);
+      assert.equal(result.translation, '你好');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   await test('aborts requests that exceed the configured timeout', async () => {
     const service = new TranslationService({
       timeoutMs: 5,

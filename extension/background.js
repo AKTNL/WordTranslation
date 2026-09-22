@@ -76,24 +76,6 @@ chrome.runtime.onInstalled.addListener(async () => {
     });
   });
 
-  // Auto-inject content script into already open normal tabs
-  try {
-    const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*', 'file:///*'] });
-    for (const tab of tabs) {
-      if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) continue;
-      if (isPdfUrl(tab.url)) continue;
-      chrome.scripting.insertCSS({
-        target: { tabId: tab.id, allFrames: true },
-        files: ['bilingual.css']
-      }).catch(() => {});
-      chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: true },
-        files: ['dict/academic_dict.js', 'dict_service.js', 'content.js', 'bilingual.js']
-      }).catch(() => {});
-    }
-  } catch (err) {
-    console.warn('Auto injection note:', err);
-  }
 });
 
 // Auto-intercept online PDF navigations to PaperDict Reader if user explicitly opted in
