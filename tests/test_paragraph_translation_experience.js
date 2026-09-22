@@ -959,6 +959,393 @@ function createTranslationNodeDouble(className = 'pd-bilingual-loading') {
   };
 }
 
+function createMutableClassList(element, initial = '') {
+  const values = new Set(String(initial).split(/\s+/).filter(Boolean));
+  const sync = () => { element._className = [...values].join(' '); };
+  sync();
+  return {
+    add(...names) { names.forEach((name) => values.add(name)); sync(); },
+    remove(...names) { names.forEach((name) => values.delete(name)); sync(); },
+    contains(name) { return values.has(name); }
+  };
+}
+
+function createTranslationViewNode(className = '') {
+  const node = {
+    _className: '',
+    innerHTML: '',
+    style: {},
+    parentNode: null,
+    removed: false,
+    retryButton: null,
+    querySelector(selector) {
+      if (selector !== '.pd-translation-retry' || !this.innerHTML.includes('pd-translation-retry')) {
+        return null;
+      }
+      if (!this.retryButton) this.retryButton = { onclick: null };
+      return this.retryButton;
+    },
+    remove() {
+      this.removed = true;
+      if (this.parentNode) {
+        this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+        this.parentNode = null;
+      }
+    }
+  };
+  node.classList = createMutableClassList(node, className);
+  Object.defineProperty(node, 'className', {
+    get() { return node._className; },
+    set(value) { node.classList = createMutableClassList(node, value); }
+  });
+  return node;
+}
+
+function createTranslationViewHarness() {
+  const container = {
+    children: [],
+    appendChild(node) {
+      node.parentNode = this;
+      this.children.push(node);
+      return node;
+    },
+    insertBefore(node, sibling) {
+      node.parentNode = this;
+      const index = this.children.indexOf(sibling);
+      if (index === -1) this.children.push(node);
+      else this.children.splice(index, 0, node);
+      return node;
+    }
+  };
+  const source = {
+    innerText: 'This academic paragraph has enough English text for translation.',
+    textContent: 'This academic paragraph has enough English text for translation.',
+    isConnected: true,
+    parentNode: container,
+    classList: null
+  };
+  source.classList = createMutableClassList(source);
+  Object.defineProperty(source, 'nextSibling', {
+    get() {
+      const index = container.children.indexOf(source);
+      return index === -1 ? null : container.children[index + 1] || null;
+    }
+  });
+  container.appendChild(source);
+  return { container, source };
+}
+
+function withTranslationViewDom(run) {
+  const previousDocument = global.document;
+  global.document = {
+    createElement: () => createTranslationViewNode(),
+    documentElement: { dataset: {} },
+    querySelectorAll: () => []
+  };
+  try {
+    const result = run();
+    if (result && typeof result.then === 'function') {
+      return result.finally(() => {
+        if (previousDocument === undefined) delete global.document;
+        else global.document = previousDocument;
+      });
+    }
+    if (previousDocument === undefined) delete global.document;
+    else global.document = previousDocument;
+    return result;
+  } catch (error) {
+    if (previousDocument === undefined) delete global.document;
+    else global.document = previousDocument;
+    throw error;
+  }
+}
+
+function getCssRuleBody(css, selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+  return match ? match[1] : '';
+}
+
+test('successful translations render one labeled block and preserve restored formula HTML', () => {
+  withTranslationViewDom(() => {
+    const { container, source } = createTranslationViewHarness();
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    const info = { state: 'done', transEl: null };
+    const formulaHtml = '<span class="pd-math-formula"><math><mi>x</mi></math></span>';
+
+    manager.renderTranslation(source, info, formulaHtml);
+    const firstNode = info.transEl;
+    manager.renderTranslation(source, info, formulaHtml);
+
+    assert.equal(container.children.filter((node) => node !== source).length, 1);
+    assert.equal(info.transEl, firstNode);
+    assert.equal(info.transEl.classList.contains('pd-bilingual-trans'), true);
+    assert.equal((info.transEl.innerHTML.match(/pd-translation-label/g) || []).length, 1);
+    assert.match(info.transEl.innerHTML, /<div class="pd-translation-label">译文<\/div>/);
+    assert.match(info.transEl.innerHTML, /<div class="pd-translation-content">/);
+    assert(info.transEl.innerHTML.includes(formulaHtml));
+  });
+});
+
+test('paired translation CSS uses the approved restrained green scheme', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../extension/bilingual.css'), 'utf8');
+  const block = getCssRuleBody(css, '.pd-bilingual-trans');
+  const label = getCssRuleBody(css, '.pd-translation-label');
+
+  assert.match(block, /margin:\s*6px 0 18px\s*!important/);
+  assert.match(block, /padding:\s*4px 0 4px 12px\s*!important/);
+  assert.match(block, /background:\s*transparent\s*!important/);
+  assert.match(block, /border-left:\s*3px solid #1c7c54\s*!important/i);
+  assert.match(block, /border-radius:\s*0\s*!important/);
+  assert.match(block, /box-shadow:\s*none\s*!important/);
+  assert.match(block, /letter-spacing:\s*0\s*!important/);
+  assert.match(label, /font-size:\s*11px\s*!important/);
+  assert.match(label, /font-weight:\s*700\s*!important/);
+  assert.match(label, /color:\s*#1c7c54\s*!important/i);
+  assert.match(label, /letter-spacing:\s*0\s*!important/);
+
+  const chineseBlock = getCssRuleBody(css, 'html[data-paperdict-mode="chinese"] .pd-bilingual-trans');
+  assert.doesNotMatch(chineseBlock, /border-left:\s*none/);
+  assert.doesNotMatch(chineseBlock, /font-size|line-height|font-family/);
+});
+
+test('Chinese mode hides only a done source with a real translation block', () => {
+  const manager = new PaperBilingualManager();
+  manager.mode = 'chinese';
+  const cases = [
+    ['idle', null, false],
+    ['queued', createTranslationViewNode('pd-bilingual-loading'), false],
+    ['translating', createTranslationViewNode('pd-bilingual-loading'), false],
+    ['error', createTranslationViewNode('pd-bilingual-error'), false],
+    ['done', createTranslationViewNode('pd-bilingual-loading'), false],
+    ['done', createTranslationViewNode('pd-bilingual-trans'), true]
+  ];
+  manager.elements = cases.map(([state, transEl]) => {
+    const source = { classList: null };
+    source.classList = createMutableClassList(source);
+    manager.elementStateMap.set(source, { state, transEl });
+    return source;
+  });
+
+  manager.applyDisplayModeToAll();
+
+  cases.forEach((entry, index) => {
+    assert.equal(manager.elements[index].classList.contains('pd-orig-hidden'), entry[2], entry[0]);
+  });
+});
+
+test('failed paragraphs enter error state, keep processing, and retry only on command', () => {
+  return withTranslationViewDom(async () => {
+    const first = createTranslationViewHarness();
+    const second = createTranslationViewHarness();
+    const responses = [
+      { success: false, error: 'service unavailable' },
+      { success: true, translation: '第二段译文' },
+      { success: true, translation: '重试后的译文' }
+    ];
+    const manager = new PaperBilingualManager();
+    manager.mode = 'chinese';
+    manager.maxConcurrency = 1;
+    manager.formulaProtector = {
+      protect: (element) => ({ protectedText: element.innerText, tokenMap: new Map() }),
+      restore: (translation) => translation,
+      escapeHtml: (value) => String(value)
+    };
+    manager.requestTranslation = () => Promise.resolve(responses.shift());
+    manager.updateCapsuleStats = () => {};
+    for (const source of [first.source, second.source]) {
+      manager.registeredElements.add(source);
+      manager.elements.push(source);
+      manager.elementStateMap.set(source, { state: 'idle', transEl: null });
+      manager.enqueueElement(source);
+    }
+
+    await flushSchedulingPromises();
+    await flushSchedulingPromises();
+    const firstInfo = manager.elementStateMap.get(first.source);
+    const secondInfo = manager.elementStateMap.get(second.source);
+    assert.equal(firstInfo.state, 'error');
+    assert.equal(firstInfo.transEl.classList.contains('pd-bilingual-error'), true);
+    assert.equal(first.source.classList.contains('pd-orig-hidden'), false);
+    assert.equal(secondInfo.state, 'done');
+    assert.equal(second.source.classList.contains('pd-orig-hidden'), true);
+    assert.equal(responses.length, 1, 'failure must not retry automatically');
+
+    const errorNode = firstInfo.transEl;
+    const retryButton = errorNode.querySelector('.pd-translation-retry');
+    assert.equal(typeof retryButton.onclick, 'function');
+    retryButton.onclick({ stopPropagation() {} });
+    await flushSchedulingPromises();
+
+    assert.equal(firstInfo.state, 'done');
+    assert.equal(firstInfo.transEl, errorNode);
+    assert.equal(firstInfo.transEl.classList.contains('pd-bilingual-trans'), true);
+    assert.equal(first.source.classList.contains('pd-orig-hidden'), true);
+    assert.equal(first.container.children.filter((node) => node !== first.source).length, 1);
+  });
+});
+
+test('rejected paragraph requests become retryable errors without blocking later work', () => {
+  return withTranslationViewDom(async () => {
+    const first = createTranslationViewHarness();
+    const second = createTranslationViewHarness();
+    let requestCount = 0;
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.maxConcurrency = 1;
+    manager.formulaProtector = {
+      protect: (element) => ({ protectedText: element.innerText, tokenMap: new Map() }),
+      restore: (translation) => translation,
+      escapeHtml: (value) => String(value)
+    };
+    manager.requestTranslation = () => {
+      requestCount++;
+      return requestCount === 1
+        ? Promise.reject(new Error('transport failed'))
+        : Promise.resolve({ success: true, translation: '后续段落译文' });
+    };
+    manager.updateCapsuleStats = () => {};
+    for (const source of [first.source, second.source]) {
+      manager.registeredElements.add(source);
+      manager.elements.push(source);
+      manager.elementStateMap.set(source, { state: 'idle', transEl: null });
+      manager.enqueueElement(source);
+    }
+
+    await flushSchedulingPromises();
+    await flushSchedulingPromises();
+
+    assert.equal(manager.elementStateMap.get(first.source).state, 'error');
+    assert.equal(manager.elementStateMap.get(second.source).state, 'done');
+    assert.equal(requestCount, 2);
+  });
+});
+
+test('loading placeholder reuses an existing generated error node', () => {
+  withTranslationViewDom(() => {
+    const { container, source } = createTranslationViewHarness();
+    const errorNode = createTranslationViewNode('pd-bilingual-error');
+    errorNode.innerHTML = '<button class="pd-translation-retry">重试</button>';
+    errorNode.style.display = 'none';
+    container.appendChild(errorNode);
+    const info = { state: 'queued', transEl: errorNode };
+    const manager = new PaperBilingualManager();
+
+    manager.renderLoadingPlaceholder(source, info);
+
+    assert.equal(info.transEl, errorNode);
+    assert.equal(errorNode.className, 'pd-bilingual-loading');
+    assert.match(errorNode.innerHTML, /pd-loading-spinner/);
+    assert.equal(errorNode.style.display, 'block');
+    assert.equal(container.children.filter((node) => node !== source).length, 1);
+  });
+});
+
+test('mode switching reuses one completed translation block and one label', () => {
+  withTranslationViewDom(() => {
+    const { container, source } = createTranslationViewHarness();
+    const manager = new PaperBilingualManager();
+    manager.showToast = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.filter = {
+      findContentElements: () => [source],
+      isEligible: () => true
+    };
+    manager.registeredElements.add(source);
+    manager.elements = [source];
+    const info = { state: 'done', transEl: null, requestId: null, requestGeneration: null };
+    manager.elementStateMap.set(source, info);
+    manager.renderTranslation(source, info, '稳定译文');
+    const translationNode = info.transEl;
+
+    manager.setMode('chinese');
+    manager.setMode('bilingual');
+    manager.setMode('chinese');
+
+    assert.equal(info.transEl, translationNode);
+    assert.equal(container.children.filter((node) => node !== source).length, 1);
+    assert.equal((translationNode.innerHTML.match(/pd-translation-label/g) || []).length, 1);
+    assert.equal(source.classList.contains('pd-orig-hidden'), true);
+  });
+});
+
+test('original mode removes done, error, and loading nodes and resets their state', () => {
+  const manager = new PaperBilingualManager();
+  manager.mode = 'original';
+  manager.updateCapsuleStats = () => {};
+  const states = ['done', 'error', 'queued'];
+  const nodes = states.map((state) => createTranslationViewNode(
+    state === 'done' ? 'pd-bilingual-trans' :
+      state === 'error' ? 'pd-bilingual-error' : 'pd-bilingual-loading'
+  ));
+  manager.elements = states.map((state, index) => {
+    const source = { classList: null };
+    source.classList = createMutableClassList(source, 'pd-orig-hidden');
+    manager.elementStateMap.set(source, {
+      state,
+      requestId: index + 1,
+      requestGeneration: 4,
+      requestEntry: null,
+      transEl: nodes[index]
+    });
+    return source;
+  });
+  manager.queue = [manager.elements[2]];
+
+  manager.restoreOriginalView();
+
+  manager.elements.forEach((source, index) => {
+    const info = manager.elementStateMap.get(source);
+    assert.equal(nodes[index].removed, true, states[index]);
+    assert.equal(info.state, 'idle', states[index]);
+    assert.equal(info.requestId, null, states[index]);
+    assert.equal(info.requestGeneration, null, states[index]);
+    assert.equal(info.transEl, null, states[index]);
+    assert.equal(source.classList.contains('pd-orig-hidden'), false, states[index]);
+  });
+});
+
+test('original mode resets a completed source omitted by a later rescan', () => {
+  const manager = new PaperBilingualManager();
+  manager.mode = 'bilingual';
+  manager.processQueue = () => {};
+  manager.renderLoadingPlaceholder = () => {};
+  manager.filter = { isEligible: () => true };
+  const source = makeSchedulingElement();
+  manager.registerElement(source);
+  const info = manager.elementStateMap.get(source);
+  const translationNode = createTranslationViewNode('pd-bilingual-trans');
+  info.state = 'done';
+  info.requestId = 7;
+  info.requestGeneration = 2;
+  info.transEl = translationNode;
+
+  manager.queue = [];
+  manager.elements = [];
+  manager.registeredElements.clear();
+  manager.mode = 'original';
+  manager.restoreOriginalView();
+
+  assert.equal(translationNode.removed, true);
+  assert.equal(info.state, 'idle');
+  assert.equal(info.requestId, null);
+  assert.equal(info.requestGeneration, null);
+  assert.equal(info.transEl, null);
+});
+
+test('generated error blocks are excluded from academic translation discovery', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const error = createAcademicElement(
+    'DIV',
+    'Translation unavailable retry control must never become source material.',
+    { className: 'pd-bilingual-error', role: 'paragraph' }
+  );
+
+  assert.equal(filter.isGeneratedNode(error), true);
+  assert.equal(filter.isEligible(error), false);
+}));
+
 async function flushSchedulingPromises() {
   await new Promise((resolve) => setImmediate(resolve));
   await Promise.resolve();

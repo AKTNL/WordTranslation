@@ -32,7 +32,8 @@
     'a', '[role]', '[contenteditable]', 'button', 'input', 'textarea', 'select',
     'form', 'option', 'label', 'audio', 'video', 'iframe', 'svg', 'canvas',
     'pre', 'code', 'math', 'script', 'style', 'noscript',
-    '.pd-bilingual-trans', '.pd-bilingual-loading', '.pd-mode-toast',
+    '.pd-bilingual-trans', '.pd-bilingual-loading', '.pd-bilingual-error',
+    '.pd-bilingual-fail', '.pd-mode-toast',
     'paper-dict-host', 'paperdict-bilingual-capsule-host'
   ].join(', ');
   const DESCENDANT_BLOCKER_TAGS = new Set([
@@ -309,6 +310,7 @@
       return Boolean(el && el.classList && (
         el.classList.contains('pd-bilingual-trans') ||
         el.classList.contains('pd-bilingual-loading') ||
+        el.classList.contains('pd-bilingual-error') ||
         el.classList.contains('pd-bilingual-fail') ||
         el.classList.contains('pd-mode-toast')
       ));
@@ -1070,7 +1072,8 @@
       this.cache = new Map(); // text -> translatedText
       this.elements = []; // all eligible content elements
       this.registeredElements = new Set();
-      this.elementStateMap = new WeakMap(); // el -> { state: 'idle'|'queued'|'translating'|'done', transEl, rawText, tokenMap }
+      this.trackedElements = new Set(); // all elements touched during the active page-mode session
+      this.elementStateMap = new WeakMap(); // el -> { state: 'idle'|'queued'|'translating'|'done'|'error', transEl, request fields }
       this.observer = null;
       this.observedElements = new WeakSet();
       this.mutationObserver = null;
@@ -1238,7 +1241,7 @@
       this.queue = [];
 
       const elementsToReschedule = [];
-      for (const el of this.elements) {
+      for (const el of this.trackedElements) {
         const info = this.elementStateMap.get(el);
         if (!info) continue;
         const wasTranslating = info.state === 'translating';
@@ -1410,6 +1413,7 @@
     unregisterElement(el, options = {}) {
       if (!el) return false;
       const wasRegistered = this.registeredElements.delete(el);
+      this.trackedElements.delete(el);
       this.observedElements.delete(el);
       if (this.observer && typeof this.observer.unobserve === 'function') {
         this.observer.unobserve(el);
@@ -1493,6 +1497,7 @@
         info = { state: 'idle', transEl: null };
         this.elementStateMap.set(el, info);
       }
+      this.trackedElements.add(el);
       this.adoptRequestEntry(info, options.requestEntries);
       if (!this.registeredElements.has(el)) {
         this.registeredElements.add(el);
@@ -1675,25 +1680,37 @@
       this.observedElements = new WeakSet();
       this.inFlightTranslations.clear();
 
-      // 2. Reset every pending item before clearing the queue. A page rescan may
+      // 2. Reset every tracked item before clearing the queue. A page rescan may
       // have removed an element from this.elements while it was still queued.
-      const pendingElements = new Set([...this.queue, ...this.elements]);
+      const pendingElements = new Set([...this.queue, ...this.elements, ...this.trackedElements]);
       this.queue = [];
       for (const el of pendingElements) {
         const info = this.elementStateMap.get(el);
-        if (info && (info.state === 'queued' || info.state === 'translating')) {
-          const wasTranslating = info.state === 'translating';
-          const requestEntry = info.requestEntry;
-          info.requestId = null;
-          info.requestGeneration = null;
-          info.requestEntry = null;
-          info.state = 'idle';
-          if (requestEntry && !wasTranslating) this.releaseRequestEntry(null, requestEntry);
-          this.removeTranslationNode(info);
+        if (!info) continue;
+        const wasTranslating = info.state === 'translating';
+        const requestEntry = info.requestEntry;
+        info.requestId = null;
+        info.requestGeneration = null;
+        info.requestEntry = null;
+        info.state = 'idle';
+        if (requestEntry && !wasTranslating) this.releaseRequestEntry(null, requestEntry);
+        this.removeTranslationNode(info);
+        if (el.classList && typeof el.classList.remove === 'function') {
+          el.classList.remove('pd-orig-hidden');
+        }
+      }
+      this.trackedElements.clear();
+
+      if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+        const generatedNodes = document.querySelectorAll(
+          '.pd-bilingual-trans, .pd-bilingual-loading, .pd-bilingual-error, .pd-bilingual-fail'
+        );
+        for (const node of generatedNodes) {
+          if (node && typeof node.remove === 'function') node.remove();
         }
       }
 
-      // 3. Hide all translation elements
+      // 3. Restore source visibility and refresh the capsule.
       this.applyDisplayModeToAll();
       this.updateCapsuleStats();
     }
@@ -1703,24 +1720,14 @@
         const info = this.elementStateMap.get(el);
         if (!info) continue;
 
-        if (this.mode === 'chinese') {
-          if (el.classList) el.classList.add('pd-orig-hidden');
-          if (info.transEl) {
-            info.transEl.style.display = 'block';
-            info.transEl.classList.add('full-chinese');
-          }
-        } else if (this.mode === 'bilingual') {
-          if (el.classList) el.classList.remove('pd-orig-hidden');
-          if (info.transEl) {
-            info.transEl.style.display = 'block';
-            info.transEl.classList.remove('full-chinese');
-          }
-        } else {
-          // Original mode
-          if (el.classList) el.classList.remove('pd-orig-hidden');
-          if (info.transEl) {
-            info.transEl.style.display = 'none';
-          }
+        const hasTranslation = info.state === 'done' && info.transEl &&
+          info.transEl.classList.contains('pd-bilingual-trans');
+        if (el.classList) {
+          if (this.mode === 'chinese' && hasTranslation) el.classList.add('pd-orig-hidden');
+          else el.classList.remove('pd-orig-hidden');
+        }
+        if (info.transEl) {
+          info.transEl.style.display = this.mode === 'original' ? 'none' : 'block';
         }
       }
     }
@@ -1735,8 +1742,8 @@
       this.elementStateMap.set(el, info);
       this.queue.push(el);
 
-      // Render shimmer loading placeholder if in bilingual or chinese mode
-      if (this.mode !== 'original' && !info.transEl) {
+      // Render or restore the single generated node for this source paragraph.
+      if (this.mode !== 'original') {
         this.renderLoadingPlaceholder(el, info);
       }
 
@@ -1744,15 +1751,18 @@
     }
 
     renderLoadingPlaceholder(el, info) {
-      const placeholder = document.createElement('div');
+      const placeholder = info.transEl || document.createElement('div');
       placeholder.className = 'pd-bilingual-loading';
       placeholder.innerHTML = `<span class="pd-loading-spinner"></span><span>正在就地速译...</span>`;
+      placeholder.style.display = 'block';
 
       // Insert immediately following the original element
-      if (el.nextSibling) {
-        el.parentNode.insertBefore(placeholder, el.nextSibling);
-      } else {
-        el.parentNode.appendChild(placeholder);
+      if (!placeholder.parentNode) {
+        if (el.nextSibling) {
+          el.parentNode.insertBefore(placeholder, el.nextSibling);
+        } else {
+          el.parentNode.appendChild(placeholder);
+        }
       }
       info.transEl = placeholder;
     }
@@ -1782,6 +1792,10 @@
         await this.translateElement(el, info, requestId, requestGeneration);
       } catch (err) {
         console.warn('Paragraph translation error:', err);
+        if (this.isRequestCurrent(el, info, requestId, requestGeneration)) {
+          info.state = 'error';
+          this.renderTranslationError(el, info, err && err.message ? err.message : '网络超时');
+        }
       } finally {
         this.activeRequests--;
         this.updateCapsuleStats();
@@ -1806,8 +1820,8 @@
       if (this.cache.has(rawText)) {
         const cachedTrans = this.cache.get(rawText);
         if (!this.isRequestCurrent(el, info, requestId, requestGeneration)) return;
-        this.renderTranslation(el, info, cachedTrans);
         info.state = 'done';
+        this.renderTranslation(el, info, cachedTrans);
         return;
       }
 
@@ -1836,29 +1850,37 @@
         // Restore protected formulas
         const restoredHtml = this.formulaProtector.restore(response.translation, tokenMap);
         this.cache.set(rawText, restoredHtml);
-        this.renderTranslation(el, info, restoredHtml);
         info.state = 'done';
+        this.renderTranslation(el, info, restoredHtml);
       } else {
-        // Translation failed
-        if (info.transEl) {
-          const errMsg = response?.error || '网络超时';
-          info.transEl.innerHTML = `
-            <div class="pd-bilingual-fail" style="display:flex;align-items:center;gap:8px;">
-              <span style="color:#ef4444;font-size:12px;">(翻译暂不可用: ${this.formulaProtector.escapeHtml(errMsg)})</span>
-              <button class="btn-retry-trans" style="padding:1px 6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;color:#2563eb;cursor:pointer;">🔄 重试</button>
-            </div>
-          `;
-          const btnRetry = info.transEl.querySelector('.btn-retry-trans');
-          if (btnRetry) {
-            btnRetry.onclick = (e) => {
-              e.stopPropagation();
-              info.state = 'idle';
-              this.enqueueElement(el);
-            };
-          }
-        }
-        info.state = 'idle'; // allow retry later
+        info.state = 'error';
+        this.renderTranslationError(el, info, response?.error || '网络超时');
       }
+    }
+
+    renderTranslationError(el, info, errorMessage) {
+      if (!info.transEl) this.renderLoadingPlaceholder(el, info);
+      info.transEl.className = 'pd-bilingual-error';
+      info.transEl.style.display = 'block';
+      info.transEl.innerHTML = `
+        <div class="pd-translation-error-message">翻译暂不可用: ${this.formulaProtector.escapeHtml(errorMessage)}</div>
+        <button type="button" class="pd-translation-retry">重试</button>
+      `;
+      if (el.classList) el.classList.remove('pd-orig-hidden');
+
+      const retryButton = info.transEl.querySelector('.pd-translation-retry');
+      if (retryButton) {
+        retryButton.onclick = (event) => {
+          if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+          this.retryTranslation(el, info);
+        };
+      }
+    }
+
+    retryTranslation(el, info) {
+      if (!info || info.state !== 'error') return;
+      info.state = 'idle';
+      this.enqueueElement(el);
     }
 
     requestTranslation(text) {
@@ -1902,15 +1924,13 @@
         info.transEl.className = 'pd-bilingual-trans';
       }
 
-      info.transEl.innerHTML = transHtml;
+      info.transEl.innerHTML = `<div class="pd-translation-label">译文</div><div class="pd-translation-content">${transHtml}</div>`;
 
       if (this.mode === 'chinese') {
         if (el.classList) el.classList.add('pd-orig-hidden');
-        info.transEl.classList.add('full-chinese');
         info.transEl.style.display = 'block';
       } else if (this.mode === 'bilingual') {
         if (el.classList) el.classList.remove('pd-orig-hidden');
-        info.transEl.classList.remove('full-chinese');
         info.transEl.style.display = 'block';
       } else {
         if (el.classList) el.classList.remove('pd-orig-hidden');
