@@ -306,10 +306,23 @@ test('academic filtering preserves prose divs with one inline link', () => withA
   const filter = new AcademicFilter();
   const paragraph = createAcademicElement(
     'DIV',
-    'The full experiment protocol appears in the supplementary methods and supports this conclusion.',
+    'The analysis follows the detailed supplementary methodology.',
     { role: 'paragraph' }
   );
-  paragraph.appendChild(createAcademicElement('A', 'supplementary methods', { role: 'link' }));
+  paragraph.appendChild(createAcademicElement('A', 'detailed supplementary methodology', { role: 'link' }));
+
+  assert.equal(filter.isCandidateTag(paragraph), true);
+  assert.equal(filter.isEligible(paragraph), true);
+}));
+
+test('academic filtering preserves prose with one non-anchor ARIA link', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const paragraph = createAcademicElement(
+    'DIV',
+    'The analysis links to one supplementary table while explaining the complete experimental result.',
+    { role: 'paragraph' }
+  );
+  paragraph.appendChild(createAcademicElement('SPAN', 'supplementary table', { role: 'link' }));
 
   assert.equal(filter.isCandidateTag(paragraph), true);
   assert.equal(filter.isEligible(paragraph), true);
@@ -506,7 +519,25 @@ test('academic filtering rejects link-only and link-dense div collections', () =
     linkDense.appendChild(createAcademicElement('A', label));
   }
 
-  for (const candidate of [linkOnly, linkDense]) {
+  const customLinkOnly = createAcademicElement(
+    'DIV',
+    'Methods Results References',
+    { role: 'paragraph' }
+  );
+  for (const label of ['Methods', 'Results', 'References']) {
+    customLinkOnly.appendChild(createAcademicElement('SPAN', label, { role: 'link' }));
+  }
+
+  const customLinkDense = createAcademicElement(
+    'DIV',
+    'Browse Dataset Model Source Evaluation and related research resources.',
+    { role: 'paragraph' }
+  );
+  for (const label of ['Dataset', 'Model', 'Source', 'Evaluation']) {
+    customLinkDense.appendChild(createAcademicElement('SPAN', label, { role: 'link' }));
+  }
+
+  for (const candidate of [linkOnly, linkDense, customLinkOnly, customLinkDense]) {
     assert.equal(filter.isCandidateTag(candidate), true);
     assert.equal(filter.isEligible(candidate), false);
   }

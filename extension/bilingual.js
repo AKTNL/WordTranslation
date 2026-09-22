@@ -249,19 +249,19 @@
       if (!el || String(el.tagName || '').toUpperCase() !== 'DIV' || typeof el.querySelectorAll !== 'function') {
         return false;
       }
-      const anchors = Array.from(el.querySelectorAll('a'));
-      if (anchors.length === 0) return false;
+      const links = Array.from(new Set(el.querySelectorAll('a, [role="link"]')));
+      if (links.length === 0) return false;
 
       const textLength = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().length;
       if (textLength === 0) return false;
-      const linkedLength = anchors.reduce((total, anchor) => {
-        return total + (anchor.innerText || anchor.textContent || '').replace(/\s+/g, ' ').trim().length;
+      const linkedLength = links.reduce((total, link) => {
+        return total + (link.innerText || link.textContent || '').replace(/\s+/g, ' ').trim().length;
       }, 0);
       const linkedRatio = Math.min(linkedLength / textLength, 1);
       const nonLinkedLength = Math.max(textLength - linkedLength, 0);
 
-      if (anchors.length === 1) return linkedRatio >= 0.8 && nonLinkedLength < 20;
-      return linkedRatio >= 0.5 || (anchors.length >= 4 && linkedRatio >= 0.35);
+      if (links.length === 1) return linkedRatio >= 0.8 && nonLinkedLength < 20;
+      return linkedRatio >= 0.5 || (links.length >= 4 && linkedRatio >= 0.35);
     }
 
     /**
