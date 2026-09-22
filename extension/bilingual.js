@@ -27,6 +27,33 @@
   const EXCLUDED_DESCENDANT_ARIA_ROLES = new Set(
     Array.from(EXCLUDED_ARIA_ROLES).filter((role) => role !== 'link')
   );
+  const CONTENT_CANDIDATE_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, blockquote, li, div';
+  const DESCENDANT_SCAN_SELECTOR = [
+    'a', '[role]', '[contenteditable]', 'button', 'input', 'textarea', 'select',
+    'form', 'option', 'label', 'audio', 'video', 'iframe', 'svg', 'canvas',
+    'pre', 'code', 'math', 'script', 'style', 'noscript',
+    '.pd-bilingual-trans', '.pd-bilingual-loading', '.pd-mode-toast',
+    'paper-dict-host', 'paperdict-bilingual-capsule-host'
+  ].join(', ');
+  const DESCENDANT_BLOCKER_TAGS = new Set([
+    'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'FORM', 'OPTION', 'LABEL',
+    'AUDIO', 'VIDEO', 'IFRAME', 'SVG', 'CANVAS', 'PRE', 'CODE', 'MATH',
+    'SCRIPT', 'STYLE', 'NOSCRIPT', 'PAPER-DICT-HOST',
+    'PAPERDICT-BILINGUAL-CAPSULE-HOST'
+  ]);
+
+  function getAriaRoleTokens(el) {
+    if (!el || typeof el.getAttribute !== 'function') return [];
+    return String(el.getAttribute('role') || '')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+  }
+
+  function isLinkElement(el) {
+    const tag = String(el && el.tagName || '').toUpperCase();
+    return tag === 'A' || getAriaRoleTokens(el).includes('link');
+  }
 
   /**
    * 1. Formula & Structure Protection (FormulaProtector)
@@ -227,9 +254,7 @@
     }
 
     hasExcludedRole(el, excludedRoles = EXCLUDED_ARIA_ROLES) {
-      if (!el || typeof el.getAttribute !== 'function') return false;
-      const roles = String(el.getAttribute('role') || '').toLowerCase().split(/\s+/).filter(Boolean);
-      return roles.some((role) => excludedRoles.has(role));
+      return getAriaRoleTokens(el).some((role) => excludedRoles.has(role));
     }
 
     isCssHidden(el) {
@@ -245,23 +270,72 @@
       }
     }
 
-    isLinkDense(el) {
+    getLinkStats(el) {
       if (!el || String(el.tagName || '').toUpperCase() !== 'DIV' || typeof el.querySelectorAll !== 'function') {
-        return false;
+        return { count: 0, textLength: 0 };
       }
-      const links = Array.from(new Set(el.querySelectorAll('a, [role="link"]')));
-      if (links.length === 0) return false;
+      const links = Array.from(new Set(
+        Array.from(el.querySelectorAll('a, [role]')).filter(isLinkElement)
+      ));
+      return {
+        count: links.length,
+        textLength: links.reduce((total, link) => {
+          return total + (link.innerText || link.textContent || '').replace(/\s+/g, ' ').trim().length;
+        }, 0)
+      };
+    }
 
+    isLinkDense(el, linkStats = null) {
+      if (!el || String(el.tagName || '').toUpperCase() !== 'DIV') return false;
+      const stats = linkStats || this.getLinkStats(el);
+      if (stats.count === 0) return false;
       const textLength = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().length;
       if (textLength === 0) return false;
-      const linkedLength = links.reduce((total, link) => {
-        return total + (link.innerText || link.textContent || '').replace(/\s+/g, ' ').trim().length;
-      }, 0);
-      const linkedRatio = Math.min(linkedLength / textLength, 1);
-      const nonLinkedLength = Math.max(textLength - linkedLength, 0);
+      const linkedRatio = Math.min(stats.textLength / textLength, 1);
+      const nonLinkedLength = Math.max(textLength - stats.textLength, 0);
 
-      if (links.length === 1) return linkedRatio >= 0.8 && nonLinkedLength < 20;
-      return linkedRatio >= 0.5 || (links.length >= 4 && linkedRatio >= 0.35);
+      if (stats.count === 1) return linkedRatio >= 0.8 && nonLinkedLength < 20;
+      return linkedRatio >= 0.5 || (stats.count >= 4 && linkedRatio >= 0.35);
+    }
+
+    getClassName(el) {
+      if (!el) return '';
+      return typeof el.className === 'string'
+        ? el.className
+        : (el.getAttribute ? el.getAttribute('class') || '' : '');
+    }
+
+    isGeneratedNode(el) {
+      return Boolean(el && el.classList && (
+        el.classList.contains('pd-bilingual-trans') ||
+        el.classList.contains('pd-bilingual-loading') ||
+        el.classList.contains('pd-mode-toast')
+      ));
+    }
+
+    isSelfStructurallyExcluded(el) {
+      if (!el || !el.tagName) return true;
+      const tag = el.tagName.toUpperCase();
+      if (this.excludedTags.has(tag) || this.isGeneratedNode(el) || this.hasExcludedRole(el)) return true;
+
+      const id = el.id || '';
+      const className = this.getClassName(el);
+      if (
+        this.excludedClassIdRegex.test(id) ||
+        this.excludedClassIdRegex.test(className) ||
+        this.mathClassIdRegex.test(id) ||
+        this.mathClassIdRegex.test(className)
+      ) {
+        return true;
+      }
+
+      if (el.getAttribute) {
+        const contentEditable = el.getAttribute('contenteditable');
+        if (contentEditable !== null && String(contentEditable).toLowerCase() !== 'false') return true;
+        if (String(el.getAttribute('aria-hidden') || '').toLowerCase() === 'true') return true;
+      }
+
+      return el.hidden === true || Boolean(el.dataset && el.dataset.pdExclude === 'true');
     }
 
     /**
@@ -269,123 +343,93 @@
      */
     isExcluded(el) {
       if (!el || !el.tagName) return true;
-
-      // Tag name check
-      if (this.excludedTags.has(el.tagName.toUpperCase())) return true;
-      if (this.isLinkDense(el)) return true;
-
-      // PaperDict UI element check
-      if (el.classList && (
-        el.classList.contains('pd-bilingual-trans') ||
-        el.classList.contains('pd-bilingual-loading') ||
-        el.classList.contains('pd-mode-toast')
-      )) {
-        return true;
-      }
-
-      // Check element and its ancestors
       let cur = el;
       while (cur && cur !== document.body && cur !== document.documentElement) {
-        const tag = cur.tagName ? cur.tagName.toUpperCase() : '';
-        if (this.excludedTags.has(tag)) return true;
-        if (this.hasExcludedRole(cur)) return true;
-
-        if (cur.classList && (
-          cur.classList.contains('pd-bilingual-trans') ||
-          cur.classList.contains('pd-bilingual-loading') ||
-          cur.classList.contains('pd-mode-toast')
-        )) {
-          return true;
-        }
-
-        const id = cur.id || '';
-        const className = typeof cur.className === 'string'
-          ? cur.className
-          : (cur.getAttribute ? cur.getAttribute('class') || '' : '');
-
-        if (
-          this.excludedClassIdRegex.test(id) ||
-          this.excludedClassIdRegex.test(className) ||
-          this.mathClassIdRegex.test(id) ||
-          this.mathClassIdRegex.test(className)
-        ) {
-          return true;
-        }
-
-        if (cur.getAttribute) {
-          const contentEditable = cur.getAttribute('contenteditable');
-          if (contentEditable !== null && contentEditable !== 'false') return true;
-          if (cur.getAttribute('aria-hidden') === 'true') return true;
-        }
-
-        if (cur.hidden === true) return true;
-
-        // Check if marked as reference container
-        if (cur.dataset && cur.dataset.pdExclude === 'true') {
-          return true;
-        }
-
-        if (this.isCssHidden(cur)) return true;
-
+        if (this.isSelfStructurallyExcluded(cur) || this.isCssHidden(cur)) return true;
         cur = cur.parentElement;
       }
-
       return false;
     }
 
     hasSemanticDivHint(el) {
       if (!el || String(el.tagName || '').toUpperCase() !== 'DIV') return false;
-      const role = el.getAttribute ? el.getAttribute('role') : null;
-      const className = typeof el.className === 'string'
-        ? el.className
-        : (el.getAttribute ? el.getAttribute('class') || '' : '');
-      return role === 'paragraph' || this.semanticDivHintRegex.test(`${el.id || ''} ${className}`);
+      return getAriaRoleTokens(el).includes('paragraph') ||
+        this.semanticDivHintRegex.test(`${el.id || ''} ${this.getClassName(el)}`);
+    }
+
+    isBlockingDescendantNode(el) {
+      if (!el || !el.tagName) return false;
+      const tag = el.tagName.toUpperCase();
+      if (DESCENDANT_BLOCKER_TAGS.has(tag) || this.isGeneratedNode(el)) return true;
+      if (this.hasExcludedRole(el, EXCLUDED_DESCENDANT_ARIA_ROLES)) return true;
+      if (!el.getAttribute) return false;
+      const contentEditable = el.getAttribute('contenteditable');
+      return contentEditable !== null && String(contentEditable).toLowerCase() !== 'false';
     }
 
     hasInteractiveDescendant(el) {
-      if (!el || typeof el.querySelector !== 'function') return false;
-      if (el.querySelector([
-        'button', 'input', 'textarea', 'select', 'form', 'option', 'label',
-        'audio', 'video', 'iframe', '[contenteditable]:not([contenteditable="false"])',
-        'pre', 'code', 'math', 'script', 'style', 'noscript',
-        '.pd-bilingual-trans', '.pd-bilingual-loading', '.pd-mode-toast',
-        'paper-dict-host', 'paperdict-bilingual-capsule-host'
-      ].join(', '))) {
-        return true;
-      }
-
-      if (typeof el.querySelectorAll !== 'function') return false;
-      return Array.from(el.querySelectorAll('[role]')).some((descendant) => {
-        return this.hasExcludedRole(descendant, EXCLUDED_DESCENDANT_ARIA_ROLES);
+      if (!el || typeof el.querySelectorAll !== 'function') return false;
+      return Array.from(el.querySelectorAll(DESCENDANT_SCAN_SELECTOR)).some((descendant) => {
+        return this.isBlockingDescendantNode(descendant);
       });
     }
 
     hasNestedCandidateBlock(el) {
       if (!el || typeof el.querySelectorAll !== 'function') return false;
-      const descendants = el.querySelectorAll('p, h1, h2, h3, h4, h5, h6, blockquote, li, div');
+      const descendants = el.querySelectorAll(CONTENT_CANDIDATE_SELECTOR);
       for (const descendant of descendants) {
-        const tag = String(descendant && descendant.tagName || '').toUpperCase();
-        if (this.blockCandidateTags.has(tag)) return true;
-        if (tag === 'DIV') {
-          const text = (descendant.innerText || descendant.textContent || '').trim();
-          if ((this.hasSemanticDivHint(descendant) && text.length >= 15) || text.length >= 40) {
-            return true;
-          }
-        }
+        if (this.isEligibleWithoutAggregate(descendant)) return true;
       }
       return false;
     }
 
-    isSemanticParagraphDiv(el) {
-      if (!el || String(el.tagName || '').toUpperCase() !== 'DIV') return false;
-      if (this.hasInteractiveDescendant(el) || this.hasNestedCandidateBlock(el)) return false;
+    isSelfCandidateTag(el) {
+      const tag = String(el && el.tagName || '').toUpperCase();
+      if (this.blockCandidateTags.has(tag)) return true;
+      if (tag !== 'DIV') return false;
       const text = (el.innerText || el.textContent || '').trim();
       return this.hasSemanticDivHint(el) || text.length >= 40;
+    }
+
+    isSemanticParagraphDiv(el) {
+      if (!this.isSelfCandidateTag(el) || String(el.tagName || '').toUpperCase() !== 'DIV') return false;
+      if (this.hasInteractiveDescendant(el) || this.hasNestedCandidateBlock(el)) return false;
+      return true;
     }
 
     isCandidateTag(el) {
       const tag = String(el && el.tagName || '').toUpperCase();
       return this.blockCandidateTags.has(tag) || (tag === 'DIV' && this.isSemanticParagraphDiv(el));
+    }
+
+    isEligibleWithoutAggregate(el, options = {}) {
+      if (!this.isSelfCandidateTag(el)) return false;
+      const tag = el.tagName.toUpperCase();
+      const isExcluded = options.isExcluded || ((candidate) => this.isExcluded(candidate));
+      if (isExcluded(el)) return false;
+
+      if (tag === 'DIV') {
+        const isBlocked = options.isDivBlocked
+          ? options.isDivBlocked(el)
+          : this.hasInteractiveDescendant(el);
+        if (isBlocked) return false;
+        const linkStats = options.getLinkStats ? options.getLinkStats(el) : null;
+        if (this.isLinkDense(el, linkStats)) return false;
+      }
+
+      const rawText = (el.innerText || el.textContent || '').trim();
+      if (tag.startsWith('H')) {
+        if (rawText.length < 2) return false;
+        if (!options.allowReferenceHeading && this.isReferenceHeading(rawText)) return false;
+      } else if (rawText.length < 15) {
+        return false;
+      }
+
+      if (!isEnglishSourceText(rawText)) return false;
+      if (typeof window !== 'undefined' && el.offsetParent === null && el.offsetHeight === 0 && el.offsetWidth === 0) {
+        return false;
+      }
+      return true;
     }
 
     /**
@@ -394,30 +438,82 @@
     isEligible(el) {
       if (!el || !el.tagName) return false;
       const tag = el.tagName.toUpperCase();
+      if (tag === 'DIV' && this.hasNestedCandidateBlock(el)) return false;
+      return this.isEligibleWithoutAggregate(el);
+    }
 
-      if (!this.isCandidateTag(el)) return false;
+    createScanContext(container, candidates) {
+      const candidateSet = new Set(candidates);
+      const blockedDivs = new WeakSet();
+      const linkStats = new WeakMap();
+      const selfExcluded = new WeakMap();
+      const cssHidden = new WeakMap();
+      const inheritedExcluded = new WeakMap();
 
-      if (this.isExcluded(el)) return false;
+      const isSelfExcluded = (el) => {
+        if (!selfExcluded.has(el)) {
+          selfExcluded.set(el, this.isSelfStructurallyExcluded(el));
+        }
+        return selfExcluded.get(el);
+      };
+      const isCssHidden = (el) => {
+        if (!cssHidden.has(el)) cssHidden.set(el, this.isCssHidden(el));
+        return cssHidden.get(el);
+      };
+      const isExcluded = (el) => {
+        if (!el || !el.tagName) return true;
+        if (inheritedExcluded.has(el)) return inheritedExcluded.get(el);
 
-      const rawText = (el.innerText || el.textContent || '').trim();
+        const path = [];
+        let cur = el;
+        let excluded = false;
+        while (cur && cur !== document.body && cur !== document.documentElement) {
+          if (inheritedExcluded.has(cur)) {
+            excluded = inheritedExcluded.get(cur);
+            break;
+          }
+          path.push(cur);
+          if (isSelfExcluded(cur) || isCssHidden(cur)) {
+            excluded = true;
+            break;
+          }
+          cur = cur.parentElement;
+        }
+        for (const node of path) inheritedExcluded.set(node, excluded);
+        return excluded;
+      };
 
-      // Headings must have >= 2 chars, paragraphs must have >= 15 chars
-      if (tag.startsWith('H')) {
-        if (rawText.length < 2) return false;
-        // Don't translate the references heading itself
-        if (this.isReferenceHeading(rawText)) return false;
-      } else {
-        if (rawText.length < 15) return false;
+      const descendants = container.querySelectorAll(DESCENDANT_SCAN_SELECTOR);
+      for (const descendant of descendants) {
+        const blocksDiv = this.isBlockingDescendantNode(descendant);
+        const isLink = isLinkElement(descendant);
+        if (!blocksDiv && !isLink) continue;
+
+        const linkTextLength = isLink
+          ? (descendant.innerText || descendant.textContent || '').replace(/\s+/g, ' ').trim().length
+          : 0;
+        let ancestor = descendant.parentElement;
+        while (ancestor && ancestor !== container.parentElement) {
+          if (candidateSet.has(ancestor) && String(ancestor.tagName || '').toUpperCase() === 'DIV') {
+            if (blocksDiv) blockedDivs.add(ancestor);
+            if (isLink) {
+              const stats = linkStats.get(ancestor) || { count: 0, textLength: 0 };
+              stats.count += 1;
+              stats.textLength += linkTextLength;
+              linkStats.set(ancestor, stats);
+            }
+          }
+          if (ancestor === container) break;
+          ancestor = ancestor.parentElement;
+        }
       }
 
-      if (!isEnglishSourceText(rawText)) return false;
-
-      // Ensure element is visible
-      if (typeof window !== 'undefined' && el.offsetParent === null && el.offsetHeight === 0 && el.offsetWidth === 0) {
-        return false;
-      }
-
-      return true;
+      return {
+        candidateSet,
+        isExcluded,
+        isDivBlocked: (el) => blockedDivs.has(el),
+        getLinkStats: (el) => linkStats.get(el) || { count: 0, textLength: 0 }
+      };
     }
 
     /**
@@ -447,9 +543,10 @@
      */
     findContentElements(root = document) {
       const container = this.findArticleContainer(root);
-      const candidates = container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, blockquote, li, div');
+      const candidates = Array.from(container.querySelectorAll(CONTENT_CANDIDATE_SELECTOR));
+      const scan = this.createScanContext(container, candidates);
 
-      const eligible = [];
+      const preliminary = [];
       let inReferenceSection = false;
       let refHeadingLevel = 2;
 
@@ -457,9 +554,15 @@
         const text = (el.innerText || el.textContent || '').trim();
         const tag = el.tagName.toUpperCase();
         const isHeading = tag.startsWith('H') && tag.length === 2;
+        const included = this.isEligibleWithoutAggregate(el, {
+          allowReferenceHeading: true,
+          isExcluded: scan.isExcluded,
+          isDivBlocked: scan.isDivBlocked,
+          getLinkStats: scan.getLinkStats
+        });
 
         // Detect entry into References section
-        if (isHeading && this.isReferenceHeading(text)) {
+        if (included && isHeading && this.isReferenceHeading(text)) {
           inReferenceSection = true;
           refHeadingLevel = parseInt(tag.charAt(1), 10) || 2;
           continue;
@@ -467,7 +570,7 @@
 
         if (inReferenceSection) {
           // If we reach another section heading at or above the reference level, reference section ended
-          if (isHeading && !this.isReferenceHeading(text)) {
+          if (included && isHeading && !this.isReferenceHeading(text)) {
             const level = parseInt(tag.charAt(1), 10) || 2;
             if (level <= refHeadingLevel || level <= 2) {
               inReferenceSection = false;
@@ -479,12 +582,25 @@
           }
         }
 
-        if (this.isEligible(el)) {
-          eligible.push(el);
+        if (included) preliminary.push(el);
+      }
+
+      const aggregateDivs = new WeakSet();
+      for (const el of preliminary) {
+        let ancestor = el.parentElement;
+        while (ancestor && ancestor !== container.parentElement) {
+          if (
+            scan.candidateSet.has(ancestor) &&
+            String(ancestor.tagName || '').toUpperCase() === 'DIV'
+          ) {
+            aggregateDivs.add(ancestor);
+          }
+          if (ancestor === container) break;
+          ancestor = ancestor.parentElement;
         }
       }
 
-      return eligible;
+      return preliminary.filter((el) => !aggregateDivs.has(el));
     }
   }
 
@@ -1482,7 +1598,9 @@
       FormulaProtector,
       AcademicFilter,
       PaperBilingualManager,
-      reattachExistingManager
+      reattachExistingManager,
+      getAriaRoleTokens,
+      isLinkElement
     };
   } else {
     global.PaperBilingualManager = PaperBilingualManager;

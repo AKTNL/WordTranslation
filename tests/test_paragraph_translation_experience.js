@@ -158,7 +158,11 @@ test('range anchor disposal detaches the cloned range when supported', () => {
   assert.equal(anchor.getRect(300, 200), null);
 });
 
-const { AcademicFilter } = require('../extension/bilingual.js');
+const {
+  AcademicFilter,
+  getAriaRoleTokens,
+  isLinkElement
+} = require('../extension/bilingual.js');
 
 function createAcademicClassList(className = '') {
   const values = new Set(String(className).split(/\s+/).filter(Boolean));
@@ -190,18 +194,28 @@ function createAcademicElement(tagName, text, options = {}) {
   if (options.role) attributes.role = options.role;
   const element = {
     tagName: String(tagName).toUpperCase(),
-    innerText: text,
-    textContent: text,
+    _ownText: String(text || ''),
     id: options.id || '',
     className: options.className || '',
     classList: createAcademicClassList(options.className),
     dataset: options.dataset || {},
     parentElement: options.parentElement || null,
     children: [],
+    hidden: Boolean(options.hidden),
     _computedStyle: options.computedStyle || null,
+    _queryStats: options.queryStats || null,
     offsetParent: options.hidden ? null : {},
     offsetHeight: options.hidden ? 0 : 40,
     offsetWidth: options.hidden ? 0 : 400,
+    get innerText() {
+      return [this._ownText, ...this.children.map((child) => child.innerText)]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+    },
+    set innerText(value) { this._ownText = String(value || ''); },
+    get textContent() { return this.innerText; },
+    set textContent(value) { this._ownText = String(value || ''); },
     getAttribute(name) {
       if (name === 'class') return this.className || null;
       if (name === 'id') return this.id || null;
@@ -209,10 +223,12 @@ function createAcademicElement(tagName, text, options = {}) {
     },
     appendChild(child) {
       child.parentElement = this;
+      if (!child._queryStats) child._queryStats = this._queryStats;
       this.children.push(child);
       return child;
     },
     querySelectorAll(selector) {
+      if (this._queryStats) this._queryStats.push({ element: this, selector: String(selector) });
       const selectors = String(selector).split(',');
       const descendants = [];
       const visit = (node) => {
@@ -306,7 +322,7 @@ test('academic filtering preserves prose divs with one inline link', () => withA
   const filter = new AcademicFilter();
   const paragraph = createAcademicElement(
     'DIV',
-    'The analysis follows the detailed supplementary methodology.',
+    'The analysis follows this method in detail.',
     { role: 'paragraph' }
   );
   paragraph.appendChild(createAcademicElement('A', 'detailed supplementary methodology', { role: 'link' }));
@@ -319,12 +335,38 @@ test('academic filtering preserves prose with one non-anchor ARIA link', () => w
   const filter = new AcademicFilter();
   const paragraph = createAcademicElement(
     'DIV',
-    'The analysis links to one supplementary table while explaining the complete experimental result.',
+    'The analysis explains the complete experimental result and links to',
     { role: 'paragraph' }
   );
   paragraph.appendChild(createAcademicElement('SPAN', 'supplementary table', { role: 'link' }));
 
   assert.equal(filter.isCandidateTag(paragraph), true);
+  assert.equal(filter.isEligible(paragraph), true);
+}));
+
+test('ARIA role tokens are normalized and identify fallback link roles', () => {
+  const fallbackLink = createAcademicElement('SPAN', 'Methods', { role: 'unknown LINK' });
+  const nativeLink = createAcademicElement('A', 'Results');
+
+  assert.deepEqual(getAriaRoleTokens(fallbackLink), ['unknown', 'link']);
+  assert.equal(isLinkElement(fallbackLink), true);
+  assert.equal(isLinkElement(nativeLink), true);
+  assert.equal(isLinkElement(createAcademicElement('SPAN', 'Plain text')), false);
+});
+
+test('contenteditable=false descendants do not block semantic divs', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const paragraph = createAcademicElement(
+    'DIV',
+    'This semantic paragraph contains a non-editable annotation and remains valid prose.',
+    { role: 'paragraph' }
+  );
+  paragraph.appendChild(createAcademicElement(
+    'SPAN',
+    'fixed annotation',
+    { attributes: { contenteditable: 'false' } }
+  ));
+
   assert.equal(filter.isEligible(paragraph), true);
 }));
 
@@ -503,7 +545,7 @@ test('academic filtering rejects link-only and link-dense div collections', () =
   const filter = new AcademicFilter();
   const linkOnly = createAcademicElement(
     'DIV',
-    'Methods Results References',
+    '',
     { role: 'paragraph' }
   );
   for (const label of ['Methods', 'Results', 'References']) {
@@ -512,7 +554,7 @@ test('academic filtering rejects link-only and link-dense div collections', () =
 
   const linkDense = createAcademicElement(
     'DIV',
-    'Browse Dataset Model Source Evaluation and related research resources.',
+    'Browse these related research resources.',
     { role: 'paragraph' }
   );
   for (const label of ['Dataset', 'Model', 'Source', 'Evaluation']) {
@@ -521,7 +563,7 @@ test('academic filtering rejects link-only and link-dense div collections', () =
 
   const customLinkOnly = createAcademicElement(
     'DIV',
-    'Methods Results References',
+    '',
     { role: 'paragraph' }
   );
   for (const label of ['Methods', 'Results', 'References']) {
@@ -530,14 +572,23 @@ test('academic filtering rejects link-only and link-dense div collections', () =
 
   const customLinkDense = createAcademicElement(
     'DIV',
-    'Browse Dataset Model Source Evaluation and related research resources.',
+    'Browse these related research resources.',
     { role: 'paragraph' }
   );
   for (const label of ['Dataset', 'Model', 'Source', 'Evaluation']) {
     customLinkDense.appendChild(createAcademicElement('SPAN', label, { role: 'link' }));
   }
 
-  for (const candidate of [linkOnly, linkDense, customLinkOnly, customLinkDense]) {
+  const fallbackRoleLinks = createAcademicElement(
+    'DIV',
+    '',
+    { role: 'paragraph' }
+  );
+  for (const label of ['Methods', 'Results', 'References']) {
+    fallbackRoleLinks.appendChild(createAcademicElement('SPAN', label, { role: 'unknown LINK' }));
+  }
+
+  for (const candidate of [linkOnly, linkDense, customLinkOnly, customLinkDense, fallbackRoleLinks]) {
     assert.equal(filter.isCandidateTag(candidate), true);
     assert.equal(filter.isEligible(candidate), false);
   }
@@ -616,6 +667,77 @@ test('content discovery returns only leaf candidates and preserves reference bou
   };
 
   assert.deepEqual(filter.findContentElements(root), [child, discussionHeading, discussion]);
+}));
+
+test('excluded reference headings do not change article reference traversal state', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const article = createAcademicElement('ARTICLE', '');
+  const navigation = article.appendChild(createAcademicElement('NAV', ''));
+  navigation.appendChild(createAcademicElement('H2', 'References'));
+  const paragraph = article.appendChild(createAcademicElement(
+    'P',
+    'This visible article paragraph follows excluded navigation and remains translatable.'
+  ));
+  const root = {
+    body: article,
+    querySelector(selector) { return selector === 'article' ? article : null; }
+  };
+
+  assert.deepEqual(filter.findContentElements(root), [paragraph]);
+}));
+
+test('hidden or excluded div descendants do not suppress visible semantic parents', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const parentWithHiddenChild = createAcademicElement(
+    'DIV',
+    'This visible parent contains its own complete academic explanation.',
+    { role: 'paragraph' }
+  );
+  const hiddenChild = parentWithHiddenChild.appendChild(createAcademicElement(
+    'DIV',
+    'This hidden child is long enough to resemble an independent academic paragraph.',
+    { role: 'paragraph', hidden: true }
+  ));
+  const parentWithExcludedChild = createAcademicElement(
+    'DIV',
+    'This visible parent also contains its own complete academic explanation.',
+    { role: 'paragraph' }
+  );
+  const excludedChild = parentWithExcludedChild.appendChild(createAcademicElement(
+    'DIV',
+    'This excluded reference child is long enough to resemble an independent academic paragraph.',
+    { role: 'paragraph', className: 'references' }
+  ));
+
+  assert.equal(filter.isEligible(hiddenChild), false);
+  assert.equal(filter.isEligible(parentWithHiddenChild), true);
+  assert.equal(filter.isEligible(excludedChild), false);
+  assert.equal(filter.isEligible(parentWithExcludedChild), true);
+}));
+
+test('content discovery uses a bounded number of subtree queries', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+  const queryStats = [];
+  const article = createAcademicElement('ARTICLE', '', { queryStats });
+  const expected = [];
+  for (let index = 0; index < 24; index++) {
+    expected.push(article.appendChild(createAcademicElement(
+      'DIV',
+      `This semantic paragraph number ${index} contains enough English prose for translation.`,
+      { role: 'paragraph' }
+    )));
+  }
+  const root = {
+    body: article,
+    querySelector(selector) { return selector === 'article' ? article : null; }
+  };
+
+  assert.deepEqual(filter.findContentElements(root), expected);
+  const candidateQueries = queryStats.filter(({ selector }) => {
+    return selector.includes('p, h1, h2, h3, h4, h5, h6, blockquote, li, div');
+  });
+  assert.equal(candidateQueries.length, 1);
+  assert(queryStats.length <= 2, `expected at most 2 subtree queries, received ${queryStats.length}`);
 }));
 
 const contentJs = fs.readFileSync(path.join(__dirname, '../extension/content.js'), 'utf8');
