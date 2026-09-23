@@ -19,7 +19,7 @@
 - Create: `tests/test_paragraph_translation_experience.js`
 - Modify: `package.json:6-10`
 
-- [ ] **Step 1: Write the failing helper tests**
+- [x] **Step 1: Write the failing helper tests**
 
 Create the test harness and initial assertions:
 
@@ -82,13 +82,13 @@ process.on('exit', () => {
 });
 ```
 
-- [ ] **Step 2: Run the new test and verify RED**
+- [x] **Step 2: Run the new test and verify RED**
 
 Run: `node tests/test_paragraph_translation_experience.js`
 
 Expected: FAIL because `extension/selection_anchor.js` does not exist.
 
-- [ ] **Step 3: Implement the pure selection-anchor helper**
+- [x] **Step 3: Implement the pure selection-anchor helper**
 
 Create a browser/CommonJS module with these complete behaviors:
 
@@ -132,13 +132,13 @@ Create a browser/CommonJS module with these complete behaviors:
 
 Load `selection_anchor.js` immediately before `content.js` in `manifest.json`, and prepend `node tests/test_paragraph_translation_experience.js` to the default `npm test` script.
 
-- [ ] **Step 4: Run the helper tests and verify GREEN**
+- [x] **Step 4: Run the helper tests and verify GREEN**
 
 Run: `node tests/test_paragraph_translation_experience.js`
 
 Expected: 2 passed, 0 failed.
 
-- [ ] **Step 5: Integrate the live anchor into `content.js`**
+- [x] **Step 5: Integrate the live anchor into `content.js`**
 
 Read the helper once and add explicit anchor lifecycle state:
 
@@ -183,7 +183,7 @@ document.addEventListener('keyup', (event) => {
 
 Closing the card, rejecting an ineligible selection, clearing the selection, or detecting an offscreen/invalid range must call `clearSelectionAnchor()`.
 
-- [ ] **Step 6: Add a source contract test for the integration and verify it passes**
+- [x] **Step 6: Add a source contract test for the integration and verify it passes**
 
 Append:
 
@@ -201,7 +201,7 @@ Run: `node tests/test_paragraph_translation_experience.js && node --check extens
 
 Expected: all new tests pass and syntax is valid.
 
-- [ ] **Step 7: Commit the selection fix**
+- [x] **Step 7: Commit the selection fix**
 
 ```bash
 git add extension/selection_anchor.js extension/manifest.json extension/content.js tests/test_paragraph_translation_experience.js package.json
@@ -214,7 +214,7 @@ git commit -m "fix: anchor selection card during scrolling"
 - Modify: `extension/bilingual.js:192-351`
 - Modify: `tests/test_paragraph_translation_experience.js`
 
-- [ ] **Step 1: Write failing semantic-DIV and exclusion tests**
+- [x] **Step 1: Write failing semantic-DIV and exclusion tests**
 
 Append helpers and assertions:
 
@@ -276,13 +276,13 @@ test('rejects navigation, interactive, code, formula, and generated translation 
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `node tests/test_paragraph_translation_experience.js`
 
 Expected: FAIL because `AcademicFilter.isEligible()` rejects all `DIV` elements.
 
-- [ ] **Step 3: Implement bounded semantic-DIV discovery**
+- [x] **Step 3: Implement bounded semantic-DIV discovery**
 
 In `AcademicFilter`, add `FORM`, `OPTION`, `LABEL`, `AUDIO`, `VIDEO`, `IFRAME`, and `MATH` to excluded tags. Add these methods:
 
@@ -318,13 +318,13 @@ const candidates = container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, blockq
 
 The existing reference-section walk and `isEnglishSourceText()` check remain authoritative.
 
-- [ ] **Step 4: Run focused and regression tests**
+- [x] **Step 4: Run focused and regression tests**
 
 Run: `node tests/test_paragraph_translation_experience.js && node tests/test_translation_maintenance.js && node tests/test_extension.js`
 
 Expected: semantic paragraph tests and all existing filter/formula tests pass.
 
-- [ ] **Step 5: Commit paragraph discovery**
+- [x] **Step 5: Commit paragraph discovery**
 
 ```bash
 git add extension/bilingual.js tests/test_paragraph_translation_experience.js
@@ -337,7 +337,7 @@ git commit -m "fix: discover semantic academic paragraphs"
 - Modify: `extension/bilingual.js:793-814,982-1002,1061-1150`
 - Modify: `tests/test_paragraph_translation_experience.js`
 
-- [ ] **Step 1: Write failing viewport scheduling tests**
+- [x] **Step 1: Write failing viewport scheduling tests**
 
 Append:
 
@@ -405,13 +405,13 @@ test('registering the same dynamic paragraph twice only queues it once', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `node tests/test_paragraph_translation_experience.js`
 
 Expected: FAIL because activation does not eagerly enqueue visible content and `registerElement()` is missing.
 
-- [ ] **Step 3: Implement explicit element registration and viewport checks**
+- [x] **Step 3: Implement explicit element registration and viewport checks**
 
 Add `mutationObserver` to the constructor and these methods:
 
@@ -439,7 +439,7 @@ registerElement(el) {
 
 `activateBilingualView()` must clear the current `elements` array, pass every newly discovered element through `registerElement()`, immediately enqueue visible elements, observe offscreen elements, then begin content mutation observation. `registerElement()` adds an element to `elements` only when it is not already present, so activation and mutation callbacks cannot create duplicates. Do not call `processQueue()` as a substitute for enqueueing because an empty queue has no work.
 
-- [ ] **Step 4: Add dynamic content observation**
+- [x] **Step 4: Add dynamic content observation**
 
 Create one observer whose callback ignores PaperDict-generated nodes and registers both an eligible added node and eligible descendants:
 
@@ -473,7 +473,7 @@ observeContentChanges() {
 
 `restoreOriginalView()` must disconnect both observers and clear the pending queue. `activateBilingualView()` must reconnect both every time a page mode is entered.
 
-- [ ] **Step 5: Add a MutationObserver lifecycle test**
+- [x] **Step 5: Add a MutationObserver lifecycle test**
 
 Append a test using an injected fake observer:
 
@@ -494,13 +494,13 @@ test('original mode disconnects dynamic content observation', () => {
 });
 ```
 
-- [ ] **Step 6: Run focused and full tests**
+- [x] **Step 6: Run focused and full tests**
 
 Run: `node tests/test_paragraph_translation_experience.js && npm test`
 
 Expected: visible, offscreen, deduplication, mutation cleanup, and all existing tests pass.
 
-- [ ] **Step 7: Commit scheduling behavior**
+- [x] **Step 7: Commit scheduling behavior**
 
 ```bash
 git add extension/bilingual.js tests/test_paragraph_translation_experience.js
@@ -514,7 +514,7 @@ git commit -m "fix: start paragraph translation immediately"
 - Modify: `extension/bilingual.css:6-129`
 - Modify: `tests/test_paragraph_translation_experience.js`
 
-- [ ] **Step 1: Write failing translation-state and visual contract tests**
+- [x] **Step 1: Write failing translation-state and visual contract tests**
 
 Append:
 
@@ -558,13 +558,13 @@ test('translation blocks expose the selected label and left-rule styling', () =>
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `node tests/test_paragraph_translation_experience.js`
 
 Expected: FAIL because Chinese mode hides pending/failed originals and translation blocks have no label.
 
-- [ ] **Step 3: Make paragraph states explicit and retryable**
+- [x] **Step 3: Make paragraph states explicit and retryable**
 
 Use `idle | queued | translating | done | error`. On failure, set `state = 'error'`, keep the original visible, and render a `.pd-bilingual-error` block with the existing error message and retry button. Retry performs:
 
@@ -591,7 +591,7 @@ if (this.mode === 'chinese' && hasTranslation) {
 }
 ```
 
-- [ ] **Step 4: Render the approved paragraph-pair layout**
+- [x] **Step 4: Render the approved paragraph-pair layout**
 
 Wrap successful content without changing formula HTML:
 
@@ -629,7 +629,7 @@ Replace the filled blue card treatment with the approved restrained divider:
 
 Keep the same left boundary in full-Chinese mode while inheriting the host page's heading and paragraph typography.
 
-- [ ] **Step 5: Make original-mode restoration remove generated DOM**
+- [x] **Step 5: Make original-mode restoration remove generated DOM**
 
 In `restoreOriginalView()`, remove every `transEl`, clear `pd-orig-hidden`, reset each element to `idle`, clear its `requestId`, and set `transEl = null`. Assign a monotonically increasing `requestId` when `processQueue()` begins a translation. `translateElement()` may mutate DOM or state only while `info.requestId` still equals that request; a stale successful response may populate the text cache but must not reinsert generated DOM. This prevents a request started in a previous mode session from overwriting a newer retry or the restored original page.
 
@@ -660,13 +660,13 @@ test('restoring original mode removes generated nodes and hidden source state', 
 });
 ```
 
-- [ ] **Step 6: Run focused and full tests**
+- [x] **Step 6: Run focused and full tests**
 
 Run: `node tests/test_paragraph_translation_experience.js && npm test && npm run test:diagnostics`
 
 Expected: all tests and diagnostics pass with zero failures.
 
-- [ ] **Step 7: Commit the paragraph presentation**
+- [x] **Step 7: Commit the paragraph presentation**
 
 ```bash
 git add extension/bilingual.js extension/bilingual.css tests/test_paragraph_translation_experience.js
@@ -678,7 +678,7 @@ git commit -m "feat: render paired paragraph translations"
 **Files:**
 - Modify only if verification finds a regression: task-scoped files from Tasks 1-4
 
-- [ ] **Step 1: Run syntax and whitespace checks**
+- [x] **Step 1: Run syntax and whitespace checks**
 
 Run:
 
@@ -691,7 +691,7 @@ git diff --check
 
 Expected: all commands exit 0 with no output from `git diff --check`.
 
-- [ ] **Step 2: Run the complete offline verification suite**
+- [x] **Step 2: Run the complete offline verification suite**
 
 Run:
 
@@ -703,15 +703,17 @@ node tests/test_ux_edge_cases.js
 
 Expected: every assertion passes and diagnostics reports zero critical defects.
 
-- [ ] **Step 3: Reload the unpacked extension in Edge**
+- [x] **Step 3: Reload the unpacked extension in Edge**
 
 Open `edge://extensions`, enable Developer mode, click Reload for PaperDict, and refresh the test article tab. Confirm only the single PaperDict extension directory `extension/` is loaded.
 
-- [ ] **Step 4: Verify the selection card on a real article**
+Verified in a fresh isolated Edge profile by launching Edge with only `extension/` enabled and confirming both the PaperDict service worker and content scripts loaded. This avoids modifying the user's normal Edge profile.
+
+- [x] **Step 4: Verify the selection card on a real article**
 
 Select an English sentence, wait for the card, then scroll within both the page and a nested scroll container. Confirm the card tracks the selection, resizes/repositions with the viewport, and closes once the selection is fully outside the viewport. Dispatch `document.dispatchEvent(new Event('keyup'))` in DevTools and confirm no console error occurs.
 
-- [ ] **Step 5: Verify bilingual and full-Chinese paragraph modes**
+- [x] **Step 5: Verify bilingual and full-Chinese paragraph modes**
 
 On a long English article containing headings, paragraphs, lists, a code block, and later-loaded content:
 
@@ -721,7 +723,7 @@ On a long English article containing headings, paragraphs, lists, a code block, 
 - Code, formulas, navigation, buttons, and failed English paragraphs remain intact.
 - Switching to original mode removes generated translation blocks and restores every English paragraph.
 
-- [ ] **Step 6: Inspect final branch state without creating a PR**
+- [x] **Step 6: Inspect final branch state without creating a PR**
 
 Run:
 
