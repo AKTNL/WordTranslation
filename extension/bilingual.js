@@ -1434,6 +1434,36 @@
       info.transEl = null;
     }
 
+    getElementSourceText(el) {
+      return String(el && (el.innerText || el.textContent) || '').trim();
+    }
+
+    invalidateElementSource(el, info, sourceText) {
+      if (!el || !info) return false;
+      const requestEntry = info.requestEntry;
+      const wasTranslating = info.state === 'translating';
+      this.queue = this.queue.filter((queued) => queued !== el);
+      info.requestId = null;
+      info.requestGeneration = null;
+      info.requestViewGeneration = null;
+      info.requestEntry = null;
+      info.sourceText = sourceText;
+      info.state = 'idle';
+      if (requestEntry && !wasTranslating) {
+        this.releaseRequestEntry(null, requestEntry);
+      } else if (
+        requestEntry && !requestEntry.settled && requestEntry.leases <= 1 &&
+        this.inFlightTranslations.get(requestEntry.mapKey) === requestEntry
+      ) {
+        this.inFlightTranslations.delete(requestEntry.mapKey);
+      }
+      this.removeTranslationNode(info);
+      if (el.classList && typeof el.classList.remove === 'function') {
+        el.classList.remove('pd-orig-hidden');
+      }
+      return true;
+    }
+
     unregisterElement(el, options = {}) {
       if (!el) return false;
       const wasRegistered = this.registeredElements.delete(el);
@@ -1519,8 +1549,13 @@
 
       let info = this.elementStateMap.get(el);
       if (!info) {
-        info = { state: 'idle', transEl: null };
+        info = { state: 'idle', transEl: null, sourceText: this.getElementSourceText(el) };
         this.elementStateMap.set(el, info);
+      } else if (options.contentChanged) {
+        const sourceText = this.getElementSourceText(el);
+        if (info.sourceText !== sourceText) {
+          this.invalidateElementSource(el, info, sourceText);
+        }
       }
       this.trackedElements.add(el);
       this.adoptRequestEntry(info, options.requestEntries);
@@ -1547,19 +1582,21 @@
       for (const el of elements || []) this.registerElement(el, options);
     }
 
-    registerMutationRoot(root, includeDescendants = false) {
+    registerMutationRoot(root, includeDescendants = false, options = {}) {
       if (!root || !root.tagName || root.isConnected === false || this.filter.isExcluded(root)) return false;
+      let changed = false;
       const candidates = [];
       if (this.filter.isEligible(root)) candidates.push(root);
+      else if (this.registeredElements.has(root)) changed = this.unregisterElement(root) || changed;
       if (includeDescendants) candidates.push(...this.filter.findContentElements(root));
 
-      let changed = false;
       for (const candidate of new Set(candidates)) {
         if (!candidate || candidate.isConnected === false) continue;
         const requestEntries = this.reconcileCandidateAncestors(candidate);
         changed = this.registerElement(candidate, {
           knownEligible: true,
-          requestEntries
+          requestEntries,
+          contentChanged: options.contentChanged === true
         }) || changed;
       }
       return changed;
@@ -1576,13 +1613,14 @@
       if (this.mutationObserver || typeof MutationObserver === 'undefined') return;
       this.mutationObserver = new MutationObserver((records) => {
         if (this.mode === 'original') return;
+        let changed = false;
         for (const record of records) {
           let refreshTarget = record.type === 'characterData';
 
           for (const node of record.removedNodes || []) {
             const removedElement = this.getMutationElement(node);
             if (removedElement && (node.nodeType === 1 || node.tagName)) {
-              this.unregisterSubtree(removedElement);
+              changed = this.unregisterSubtree(removedElement) || changed;
             }
             if (!removedElement || this.filter.isExcluded(removedElement)) continue;
             refreshTarget = true;
@@ -1591,19 +1629,28 @@
           for (const node of record.addedNodes || []) {
             const addedElement = this.getMutationElement(node);
             if (!addedElement || this.filter.isExcluded(addedElement)) continue;
-            this.registerMutationRoot(addedElement, node.nodeType === 1 || Boolean(node.tagName));
+            changed = this.registerMutationRoot(
+              addedElement,
+              node.nodeType === 1 || Boolean(node.tagName),
+              { contentChanged: true }
+            ) || changed;
             refreshTarget = true;
           }
 
           if (record.type === 'characterData') {
             const hydratedElement = this.getMutationElement(record.target);
-            this.registerMutationRoot(hydratedElement, false);
+            changed = this.registerMutationRoot(hydratedElement, false, { contentChanged: true }) || changed;
           } else if (refreshTarget) {
-            this.registerMutationRoot(this.getMutationElement(record.target), false);
+            changed = this.registerMutationRoot(
+              this.getMutationElement(record.target),
+              false,
+              { contentChanged: true }
+            ) || changed;
           }
         }
-        this.applyDisplayModeToAll();
-        this.updateCapsuleStats();
+        if (changed) {
+          this.updateCapsuleStats();
+        }
       });
     }
 

@@ -1756,6 +1756,136 @@ test('text hydration registers an initially empty paragraph exactly once', () =>
   });
 });
 
+test('in-place paragraph text changes invalidate stale translations and reveal Chinese sources', () => {
+  const mutation = createObserverDouble();
+  withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, ({ body }) => {
+    const paragraph = makeSchedulingElement(20, 80, 10, 210, {
+      text: 'The original academic paragraph has already been translated successfully.'
+    });
+    body.appendChild(paragraph);
+    const manager = new PaperBilingualManager();
+    manager.mode = 'chinese';
+    manager.filter = {
+      isExcluded: () => false,
+      isEligible: () => true,
+      findContentElements: () => []
+    };
+    manager.processQueue = () => {};
+    manager.renderLoadingPlaceholder = (element, info) => {
+      info.transEl = createTranslationNodeDouble('pd-bilingual-loading');
+    };
+    manager.applyDisplayModeToAll = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.observeContentChanges();
+    manager.registerElement(paragraph);
+
+    const info = manager.elementStateMap.get(paragraph);
+    const oldNode = createTranslationNodeDouble('pd-bilingual-trans');
+    info.state = 'done';
+    info.transEl = oldNode;
+    manager.ownedTranslationNodes.add(oldNode);
+    paragraph.classList = createMutableClassList(paragraph, 'pd-orig-hidden');
+    paragraph.innerText = 'The hydrated academic paragraph now contains different experimental results.';
+
+    const textNode = { nodeType: 3, parentElement: paragraph, parentNode: paragraph };
+    mutation.instances[0].emit([{ type: 'characterData', target: textNode }]);
+
+    assert.equal(oldNode.removed, true);
+    assert.equal(paragraph.classList.contains('pd-orig-hidden'), false);
+    assert.equal(info.state, 'queued');
+    assert.deepEqual(manager.queue, [paragraph]);
+  });
+});
+
+test('in-place text changes prevent an old in-flight response from rendering', async () => {
+  const mutation = createObserverDouble();
+  await withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, async ({ body }) => {
+    const paragraph = makeSchedulingElement(20, 80, 10, 210, {
+      text: 'The original academic paragraph is waiting for a provider response.'
+    });
+    body.appendChild(paragraph);
+    const deferred = createDeferred();
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.pageModeActive = true;
+    manager.filter = {
+      isExcluded: () => false,
+      isEligible: () => true,
+      findContentElements: () => []
+    };
+    manager.formulaProtector = {
+      protect: () => ({ protectedText: 'old protected text', tokenMap: new Map() }),
+      restore: (text) => text
+    };
+    manager.renderLoadingPlaceholder = () => {};
+    manager.applyDisplayModeToAll = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.processQueue = () => {};
+    manager.requestTranslation = () => deferred.promise;
+    let renders = 0;
+    manager.renderTranslation = () => { renders++; };
+    manager.observeContentChanges();
+
+    const info = {
+      state: 'translating',
+      transEl: null,
+      requestId: 1,
+      requestGeneration: 0,
+      requestViewGeneration: 0,
+      requestEntry: null,
+      sourceText: paragraph.innerText
+    };
+    manager.registeredElements.add(paragraph);
+    manager.trackedElements.add(paragraph);
+    manager.elements.push(paragraph);
+    manager.elementStateMap.set(paragraph, info);
+
+    const pending = manager.translateElement(paragraph, info, 1, 0, 0);
+    await Promise.resolve();
+    paragraph.innerText = 'The updated academic paragraph contains new evidence and must be translated again.';
+    const textNode = { nodeType: 3, parentElement: paragraph, parentNode: paragraph };
+    mutation.instances[0].emit([{ type: 'characterData', target: textNode }]);
+    assert.equal(info.requestId, null);
+    assert.equal(info.state, 'queued');
+
+    deferred.resolve({ success: true, translation: 'stale translation' });
+    await pending;
+    assert.equal(renders, 0);
+  });
+});
+
+test('ignored mutations do not trigger a global display pass', () => {
+  const mutation = createObserverDouble();
+  withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, ({ body }) => {
+    const paragraph = makeSchedulingElement();
+    body.appendChild(paragraph);
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.filter = {
+      isExcluded: (element) => element && element.dataset && element.dataset.paperdictGenerated === 'true',
+      isEligible: (element) => element === paragraph,
+      findContentElements: () => []
+    };
+    manager.processQueue = () => {};
+    manager.renderLoadingPlaceholder = () => {};
+    let displayPasses = 0;
+    let statsPasses = 0;
+    manager.applyDisplayModeToAll = () => { displayPasses++; };
+    manager.updateCapsuleStats = () => { statsPasses++; };
+    manager.observeContentChanges();
+
+    const generated = makeSchedulingElement();
+    generated.dataset.paperdictGenerated = 'true';
+    mutation.instances[0].emit([{ type: 'childList', target: body, addedNodes: [generated], removedNodes: [] }]);
+    assert.equal(displayPasses, 0);
+    assert.equal(statsPasses, 0);
+
+    mutation.instances[0].emit([{ type: 'childList', target: body, addedNodes: [paragraph], removedNodes: [] }]);
+    assert.equal(displayPasses, 0);
+    assert.equal(statsPasses, 1);
+  });
+});
+
 test('adding a specific child replaces a queued aggregate paragraph', () => {
   const mutation = createObserverDouble();
   withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, ({ body }) => {
