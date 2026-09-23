@@ -52,7 +52,7 @@
         }
       },
 
-      getRect(viewportWidth, viewportHeight) {
+      getRect(viewportWidth, viewportHeight, options = {}) {
         if (disposed || !anchoredRange || typeof anchoredRange.getBoundingClientRect !== 'function') {
           return null;
         }
@@ -64,8 +64,10 @@
           const geometry = [rect.left, rect.top, rect.right, rect.bottom, rect.width, rect.height];
           if (!geometry.every(Number.isFinite)) return null;
           if (rect.width <= 0 || rect.height <= 0) return null;
-          if (rect.right <= 0 || rect.bottom <= 0) return null;
-          if (rect.left >= viewportWidth || rect.top >= viewportHeight) return null;
+          if (!options.allowOffscreen) {
+            if (rect.right <= 0 || rect.bottom <= 0) return null;
+            if (rect.left >= viewportWidth || rect.top >= viewportHeight) return null;
+          }
           return rect;
         } catch (error) {
           return null;

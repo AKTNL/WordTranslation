@@ -1602,6 +1602,19 @@
       return changed;
     }
 
+    registerMutationAncestors(root, options = {}) {
+      let changed = false;
+      let current = root;
+      while (current && current.tagName) {
+        const isEligible = this.filter.isEligible(current);
+        changed = this.registerMutationRoot(current, false, options) || changed;
+        if (isEligible || this.registeredElements.has(current)) break;
+        if (current === document.body || current === document.documentElement) break;
+        current = current.parentElement || null;
+      }
+      return changed;
+    }
+
     getMutationElement(node) {
       if (!node) return null;
       if (node.nodeType === 1 || node.tagName) return node;
@@ -1639,11 +1652,10 @@
 
           if (record.type === 'characterData') {
             const hydratedElement = this.getMutationElement(record.target);
-            changed = this.registerMutationRoot(hydratedElement, false, { contentChanged: true }) || changed;
+            changed = this.registerMutationAncestors(hydratedElement, { contentChanged: true }) || changed;
           } else if (refreshTarget) {
-            changed = this.registerMutationRoot(
+            changed = this.registerMutationAncestors(
               this.getMutationElement(record.target),
-              false,
               { contentChanged: true }
             ) || changed;
           }

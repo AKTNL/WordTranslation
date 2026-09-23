@@ -81,6 +81,7 @@
   let isPinned = false;
   let currentWordData = null;
   let activeSelectionAnchor = null;
+  let selectionCardReady = false;
   let selectionPositionFrame = null;
   let lookupGeneration = 0;
   let isCardInteractionActive = false;
@@ -380,10 +381,12 @@
       e.stopPropagation();
       hideTriggerIcon();
       if (pendingSelectionData) {
+        const selectionData = pendingSelectionData;
+        pendingSelectionData = null;
         executeLookup(
-          pendingSelectionData.text,
-          pendingSelectionData.rect,
-          pendingSelectionData.lookupToken
+          selectionData.text,
+          selectionData.rect,
+          selectionData.lookupToken
         );
       }
     });
@@ -586,23 +589,30 @@
     if (isPinned && !force) return;
     lookupGeneration++;
     pendingSelectionData = null;
+    selectionCardReady = false;
     clearActiveSelectionAnchor();
     if (cardEl) {
       cardEl.classList.remove('visible');
     }
   }
 
-  function getSelectionCardRect(fallbackRect, expectedAnchor = null) {
+  function getSelectionCardRect(fallbackRect, expectedAnchor = null, options = {}) {
     if (expectedAnchor && expectedAnchor !== activeSelectionAnchor) return null;
     if (!activeSelectionAnchor) return expectedAnchor ? null : fallbackRect;
 
-    const rect = activeSelectionAnchor.getRect(window.innerWidth, window.innerHeight);
+    const rect = activeSelectionAnchor.getRect(window.innerWidth, window.innerHeight, options);
     if (rect) return rect;
 
     clearActiveSelectionAnchor();
     hideTriggerIcon();
     hideCard(true);
     return null;
+  }
+
+  function isRectInViewport(rect) {
+    return Boolean(rect && rect.width > 0 && rect.height > 0 &&
+      rect.right > 0 && rect.bottom > 0 &&
+      rect.left < window.innerWidth && rect.top < window.innerHeight);
   }
 
   function positionCard(rect) {
@@ -642,19 +652,29 @@
 
       const cardVisible = cardEl && cardEl.classList.contains('visible');
       const triggerVisible = triggerIconEl && triggerIconEl.classList.contains('visible');
-      if (!cardVisible && !triggerVisible) return;
+      if (!cardVisible && !triggerVisible && !selectionCardReady && !pendingSelectionData) return;
 
-      const rect = activeSelectionAnchor.getRect(window.innerWidth, window.innerHeight);
+      const rect = activeSelectionAnchor.getRect(window.innerWidth, window.innerHeight, { allowOffscreen: true });
       if (!rect) {
         pendingSelectionData = null;
+        selectionCardReady = false;
         clearActiveSelectionAnchor();
         hideCard(true);
         hideTriggerIcon();
         return;
       }
 
-      if (cardVisible) positionCard(rect);
-      if (triggerVisible) showTriggerIcon(rect);
+      if (!isRectInViewport(rect)) {
+        if (cardVisible) cardEl.classList.remove('visible');
+        if (triggerVisible) hideTriggerIcon();
+        return;
+      }
+
+      if (selectionCardReady) {
+        positionCard(rect);
+        cardEl.classList.add('visible');
+      }
+      if (pendingSelectionData) showTriggerIcon(rect);
     });
   }
 
@@ -868,10 +888,19 @@
     }
 
     // Position and show
-    const cardRect = getSelectionCardRect(rect, expectedAnchor);
-    if (!cardRect) return;
-    positionCard(cardRect);
-    cardEl.classList.add('visible');
+    const cardRect = getSelectionCardRect(rect, expectedAnchor, { allowOffscreen: true });
+    if (!cardRect) {
+      selectionCardReady = false;
+      return;
+    }
+    selectionCardReady = true;
+    if (isRectInViewport(cardRect)) {
+      positionCard(cardRect);
+      cardEl.classList.add('visible');
+    } else {
+      cardEl.classList.remove('visible');
+      hideTriggerIcon();
+    }
 
     // Auto audio if enabled
     if (settings.autoAudio && data.showSpeaker && !data.loading) {

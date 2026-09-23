@@ -86,6 +86,7 @@ test('range anchors reject invalid, empty, and fully offscreen rectangles', () =
   assert.equal(anchor.getRect(300, 200), null);
   rect = { left: 310, top: 20, right: 410, bottom: 40, width: 100, height: 20 };
   assert.equal(anchor.getRect(300, 200), null);
+  assert.deepEqual(anchor.getRect(300, 200, { allowOffscreen: true }), rect);
   rect = { left: -110, top: 20, right: -10, bottom: 40, width: 100, height: 20 };
   assert.equal(anchor.getRect(300, 200), null);
   rect = { left: 10, top: 210, right: 110, bottom: 230, width: 100, height: 20 };
@@ -1756,6 +1757,34 @@ test('text hydration registers an initially empty paragraph exactly once', () =>
   });
 });
 
+test('browser translation wrappers re-register the eligible paragraph ancestor', () => {
+  const mutation = createObserverDouble();
+  withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, ({ body }) => {
+    const paragraph = makeSchedulingElement(20, 80, 10, 210, { text: '' });
+    const translatedWrapper = createAcademicElement('FONT', 'Translated paragraph text now contains enough English prose for translation.');
+    paragraph.appendChild(translatedWrapper);
+    body.appendChild(paragraph);
+
+    const manager = new PaperBilingualManager();
+    manager.mode = 'bilingual';
+    manager.processQueue = () => {};
+    manager.renderLoadingPlaceholder = () => {};
+    manager.applyDisplayModeToAll = () => {};
+    manager.updateCapsuleStats = () => {};
+    manager.filter = {
+      isExcluded: () => false,
+      isEligible: (element) => element === paragraph
+    };
+    manager.observeContentChanges();
+
+    const textNode = { nodeType: 3, parentElement: translatedWrapper, parentNode: translatedWrapper };
+    mutation.instances[0].emit([{ type: 'characterData', target: textNode }]);
+
+    assert.deepEqual(manager.elements, [paragraph]);
+    assert.deepEqual(manager.queue, [paragraph]);
+  });
+});
+
 test('in-place paragraph text changes invalidate stale translations and reveal Chinese sources', () => {
   const mutation = createObserverDouble();
   withSchedulingDom({ MutationObserver: mutation.ObserverDouble }, ({ body }) => {
@@ -2643,7 +2672,7 @@ function createDeferred() {
   return { promise, resolve };
 }
 
-function createContentHarness() {
+function createContentHarness(settingsOverrides = {}) {
   const document = Object.assign(createEventTarget(), {
     body: createElement('body'),
     documentElement: createElement('html'),
@@ -2684,7 +2713,7 @@ function createContentHarness() {
 
   const chrome = {
     storage: {
-      sync: { get(defaults, callback) { callback(defaults); } },
+      sync: { get(defaults, callback) { callback({ ...defaults, ...settingsOverrides }); } },
       local: {
         get(defaults, callback) { callback(defaults); },
         set() {}
@@ -2883,7 +2912,40 @@ test('content card uses delayed live geometry and follows throttled scroll and r
   harness.window.dispatch('scroll');
   harness.flushAnimationFrames();
   assert.equal(card.classList.contains('visible'), false);
-  assert.equal(harness.getDetachCalls(), 1);
+  assert.equal(harness.getDetachCalls(), 0);
+
+  harness.setRect({ left: 350, top: 280, right: 450, bottom: 300, width: 100, height: 20 });
+  harness.window.dispatch('scroll');
+  harness.flushAnimationFrames();
+  assert.equal(card.classList.contains('visible'), true);
+  assert.equal(harness.getDetachCalls(), 0);
+});
+
+test('icon trigger is consumed when lookup starts and does not return on scroll', async () => {
+  const harness = createContentHarness({ triggerMode: 'icon' });
+  harness.setDomSelection('alpha', {
+    left: 100, top: 100, right: 200, bottom: 120, width: 100, height: 20
+  });
+  harness.document.dispatch('mouseup', { composedPath: () => [] });
+  harness.flushTimers();
+
+  const trigger = harness.getShadowRoot().querySelector('#paper-dict-trigger-btn');
+  assert.equal(trigger.classList.contains('visible'), true);
+  trigger.dispatch('click', { stopPropagation() {} });
+  assert.equal(trigger.classList.contains('visible'), false);
+  assert.equal(harness.requests.length, 1);
+
+  await resolveRequest(harness, 0, {
+    success: true,
+    found: true,
+    translation: 'translated',
+    source: 'test glossary'
+  });
+  assert.equal(harness.getCard().classList.contains('visible'), true);
+
+  harness.window.dispatch('scroll');
+  harness.flushAnimationFrames();
+  assert.equal(trigger.classList.contains('visible'), false);
 });
 
 test('input and context-menu lookups dispose an existing DOM range anchor', async () => {
@@ -3046,10 +3108,10 @@ test('content script owns and clears one active DOM selection anchor', () => {
 });
 
 test('content script positions from the live anchor before showing the card', () => {
-  assert.match(contentJs, /function getSelectionCardRect\(fallbackRect(?:, expectedAnchor = null)?\)/);
+  assert.match(contentJs, /function getSelectionCardRect\(fallbackRect, expectedAnchor = null, options = \{\}\)/);
   assert.match(contentJs, /if \(expectedAnchor !== activeSelectionAnchor\) return/);
-  assert.match(contentJs, /activeSelectionAnchor\.getRect\(window\.innerWidth, window\.innerHeight\)/);
-  assert.match(contentJs, /const cardRect = getSelectionCardRect\(rect, expectedAnchor\);[\s\S]*?positionCard\(cardRect\)/);
+  assert.match(contentJs, /activeSelectionAnchor\.getRect\(window\.innerWidth, window\.innerHeight, options\)/);
+  assert.match(contentJs, /const cardRect = getSelectionCardRect\(rect, expectedAnchor, \{ allowOffscreen: true \}\);[\s\S]*?positionCard\(cardRect\)/);
 });
 
 test('content script throttles visible card positioning on scroll and resize', () => {
