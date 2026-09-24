@@ -119,15 +119,15 @@
 <body>
 
   <div class="instructions-card">
-    <h3>🧪 PaperDict 全功能测试页面 <span class="badge-phase">Phase 1 & Phase 2</span></h3>
-    <p>安装好扩展后，您可以直接在本页进行以下核心功能验证：</p>
+    <h3>🧪 PaperDict 全功能综合测试页面 <span class="badge-phase">v2.3 全新升级</span></h3>
+    <p>安装/重载扩展后，您可以直接在本测试页面一站式验证全部新增与原有核心功能：</p>
     <ul>
-      <li><strong>测试 1（划词即弹）</strong>：划选单词如 <span class="highlight-tip">hypothesis</span>、<span class="highlight-tip">stochastic</span>、<span class="highlight-tip">paradigm</span>，观察毫秒级悬浮卡片。</li>
-      <li><strong>测试 2（连字符合并）</strong>：划选下方标红处跨行的 <code>hypo-</code> 与 <code>thesis</code>，观察是否智能合并为 <code>hypothesis</code>。</li>
-      <li><strong>测试 3（悬浮控制胶囊）</strong>：页面右侧停靠着 PaperDict 胶囊，点击可展开切换：<strong>【双语对照】</strong>、<strong>【纯享中文】</strong>、<strong>【还原英文】</strong>。</li>
-      <li><strong>测试 4（全局快捷键）</strong>：按下键盘 <span class="highlight-tip">Alt + B</span>（Mac 上为 <span class="highlight-tip">Option + B</span>），可一键循环切换阅读模式。</li>
-      <li><strong>测试 5（学术公式保护）</strong>：开启双语或纯中文模式后，观察正文中的 LaTeX 公式（如 <code>$E = mc^2$</code>）、MathML 及 KaTeX 公式是否被完好保留，杜绝乱码。</li>
-      <li><strong>测试 6（智能降噪过滤）</strong>：底部的代码块（Python 代码）与 <strong>References 参考文献</strong> 是否被自动忽略，免受翻译污染。</li>
+      <li><strong>测试 1（翻译缓存与请求取消）</strong>：快速连续划选不同长短句，观察请求切换平滑无旧结果覆盖，网络并发请求自动去重。</li>
+      <li><strong>测试 2（Highlight + Note 高亮与笔记）</strong>：划选任意学术句子，在弹出的卡片中点击 4 种颜色即可高亮正文；点击“笔记”输入思考并保存；刷新页面高亮自动还原；在卡片中直接点击“导出 MD”即可下载。</li>
+      <li><strong>测试 3（Paper-specific Glossary 论文专属术语）</strong>：划选正文中的 <span class="highlight-tip">LoRA</span> 或 <span class="highlight-tip">DPO</span>，弹窗将优先浮现 <strong>“[论文专属定义]”</strong>，并高亮其首次出处的原文句。</li>
+      <li><strong>测试 4（正文引用卡片 [1] / [2] / [1, 2]）</strong>：在正文中划选或悬停引用标记如 <span class="highlight-tip">[1]</span> 或 <span class="highlight-tip">[1, 2]</span>，即刻就地浮现文献预览卡片（论文标题、年份、作者、Google 学术与 arXiv 链接）。</li>
+      <li><strong>测试 5（Semantic Reader 学术语境导读）</strong>：划选学术术语如 <span class="highlight-tip">temperature</span>、<span class="highlight-tip">disentangle</span>，点击卡片头部的 <strong>“导读”</strong> 按钮，体验专业学术语境导读。</li>
+      <li><strong>测试 6（就地全文双语速读 Alt+B）</strong>：按键盘 <span class="highlight-tip">Alt + B</span> 或点击右侧胶囊，切换双语对照与纯中文速读，公式保护与参考文献智能跳过正常工作。</li>
     </ul>
   </div>
 
@@ -153,6 +153,7 @@
     Understanding complex academic phenomena requires flexible models capable of capturing latent relationships in text.
     The primary hypo-
     thesis of our study posits that multi-head attention layers effectively disentangle semantic representations.
+    In this work, we integrate Low-Rank Adaptation (LoRA) and Direct Preference Optimization (DPO) [1, 2] to fine-tune our representations across various downstream tasks.
     Previous approaches relied heavily on hand-crafted features, which limited their applicability to diverse scientific domains.
   </p>
   <p>
@@ -165,6 +166,7 @@
   <p>
     Let $\mathcal{M}$ denote the Riemannian manifold equipped with metric tensor $g$.
     We define the energy objective function constrained by relativistic principles where the baseline energy is modeled as $E = mc^2$.
+    For sampling diversity across generative trajectories, we regulate the temperature hyperparameter and top-p thresholds [3].
     The empirical generalization error $\epsilon$ satisfies the bound $\mathcal{O}(n^{-1/2} \log n)$.
   </p>
 

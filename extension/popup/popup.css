@@ -7,7 +7,7 @@
 }
 
 body {
-  width: 400px;
+  width: 420px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-size: 13px;
   line-height: 1.5;
@@ -90,6 +90,8 @@ body {
   justify-content: center;
   gap: 4px;
   transition: all 0.18s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .nav-tab:hover {
@@ -409,6 +411,8 @@ body {
   cursor: pointer;
   transition: all 0.18s ease;
   text-align: center;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .btn-mode-tab:hover {
@@ -640,7 +644,10 @@ input:checked + .slider:before {
 
 .wordbook-actions {
   display: flex;
+  align-items: center;
   gap: 5px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .btn-tool-sm {
@@ -653,11 +660,24 @@ input:checked + .slider:before {
   color: #334155;
   cursor: pointer;
   transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .btn-tool-sm:hover {
   background: #e2e8f0;
   color: #0f172a;
+}
+
+.btn-tool-sm.primary {
+  color: #ffffff;
+  border-color: #2563eb;
+  background: #2563eb;
+}
+
+.btn-tool-sm.primary:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
 }
 
 .btn-tool-sm.danger {

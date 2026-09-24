@@ -40,6 +40,8 @@
     </div>
 
     <div class="toolbar-right" id="zoom-controls" style="display: none;">
+      <button id="btn-reader-glossary" class="tool-btn" title="查看本篇论文专属术语与缩写表">术语表 (<span id="reader-glossary-count">0</span>)</button>
+      <button id="btn-reader-notes" class="tool-btn" title="查看与导出本篇论文笔记">论文笔记 (<span id="reader-notes-count">0</span>)</button>
       <button id="btn-zoom-out" class="tool-btn" title="缩小">－</button>
       <span id="zoom-value" class="zoom-text">100%</span>
       <button id="btn-zoom-in" class="tool-btn" title="放大">＋</button>
@@ -50,14 +52,16 @@
   <!-- Empty / Dropzone Welcome Screen -->
   <div id="welcome-dropzone" class="welcome-screen">
     <div class="dropzone-box" id="dropzone-box">
-      <div class="dropzone-icon">📄</div>
+      <div class="dropzone-icon">
+        <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="#94a3b8" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      </div>
       <h2>拖拽学术论文 PDF 到这里阅读</h2>
       <p>或点击上方“打开论文 PDF”选择文件</p>
       <div class="feature-pills">
-        <span class="pill">⚡ 鼠标划词秒出释义</span>
-        <span class="pill">🧩 智能消除换行断词</span>
-        <span class="pill">🔊 真人语音发音</span>
-        <span class="pill">🌐 长难句整句翻译</span>
+        <span class="pill">鼠标划词秒出释义</span>
+        <span class="pill">智能消除换行断词</span>
+        <span class="pill">真人语音发音</span>
+        <span class="pill">长难句整句翻译</span>
       </div>
     </div>
   </div>
@@ -67,11 +71,39 @@
     <div id="pdf-viewer" class="pdf-viewer"></div>
   </main>
 
+  <!-- Reader Notes Drawer -->
+  <aside id="reader-notes-drawer" class="reader-notes-drawer" style="display: none;">
+    <div class="drawer-header">
+      <h3>本篇论文批注与笔记</h3>
+      <button id="btn-close-notes-drawer" class="drawer-close-btn" title="关闭抽屉">✕</button>
+    </div>
+    <div class="drawer-toolbar">
+      <button id="btn-drawer-export-md" class="btn-drawer-tool" title="导出 Markdown 笔记">导出 MD</button>
+    </div>
+    <div id="drawer-notes-list" class="drawer-notes-list">
+      <div class="empty-drawer-hint" style="color:#94a3b8;font-size:12px;text-align:center;padding-top:30px;">暂无论文批注，划选文字后点击高亮或输入笔记即可创建！</div>
+    </div>
+  </aside>
+
+  <!-- Reader Glossary Drawer -->
+  <aside id="reader-glossary-drawer" class="reader-notes-drawer" style="display: none;">
+    <div class="drawer-header">
+      <h3>本篇论文专属术语表 (Glossary)</h3>
+      <button id="btn-close-glossary-drawer" class="drawer-close-btn" title="关闭抽屉">✕</button>
+    </div>
+    <div id="drawer-glossary-list" class="drawer-notes-list">
+      <div class="empty-drawer-hint" style="color:#94a3b8;font-size:12px;text-align:center;padding-top:30px;">暂未在本篇论文中检测到显式定义的缩写与术语</div>
+    </div>
+  </aside>
+
   <!-- PDF.js Libraries -->
   <script src="lib/pdf.min.js"></script>
   <!-- Dict & Content Script for Selection Translation -->
   <script src="../dict/academic_dict.js"></script>
   <script src="../dict_service.js"></script>
+  <script src="../annotation_manager.js"></script>
+  <script src="../glossary_extractor.js"></script>
+  <script src="../citation_parser.js"></script>
   <script src="../bilingual.js"></script>
   <script src="../selection_anchor.js"></script>
   <script src="../content.js"></script>

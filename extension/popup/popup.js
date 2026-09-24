@@ -30,6 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (targetId === 'tab-wordbook') loadWordBook();
+      if (targetId === 'tab-notes') loadNotes();
       if (targetId === 'tab-history') loadHistory();
     });
   });
@@ -74,6 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const wordbookTotal = document.getElementById('wordbook-total');
   const navWordbookCount = document.getElementById('nav-wordbook-count');
   const wordbookList = document.getElementById('wordbook-list');
+  const btnExportWordbookMd = document.getElementById('btn-export-wordbook-md');
   const btnExportAnki = document.getElementById('btn-export-anki');
   const btnExportCsv = document.getElementById('btn-export-csv');
   const btnClearWordbook = document.getElementById('btn-clear-wordbook');
@@ -582,7 +584,7 @@ document.addEventListener('DOMContentLoaded', () => {
       updateWordBookCount();
 
       if (book.length === 0) {
-        wordbookList.innerHTML = '<div class="empty-hint">生词本空空如也，查词时点击卡片右上角 ⭐ 即可收藏！</div>';
+        wordbookList.innerHTML = '<div class="empty-hint">生词本空空如也，查词时点击卡片右上角收藏按钮即可保存！</div>';
         return;
       }
 
@@ -610,7 +612,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Export Anki / CSV
+  // Export WordBook Markdown / Anki / CSV
+  if (btnExportWordbookMd) {
+    btnExportWordbookMd.addEventListener('click', () => {
+      chrome.storage.local.get({ wordBook: [] }, (res) => {
+        const book = res.wordBook || [];
+        if (book.length === 0) return alert('当前生词本为空，查词时点击卡片收藏按钮即可保存！');
+        const md = AnnotationManager.exportWordBookToMarkdown(book);
+        downloadFile(md, 'paperdict_vocab_wordbook.md', 'text/markdown;charset=utf-8;');
+      });
+    });
+  }
+
   if (btnExportAnki) {
     btnExportAnki.addEventListener('click', () => {
       chrome.storage.local.get({ wordBook: [] }, (res) => {
@@ -843,6 +856,68 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Annotation & Note Management
+  const ANNOTATION_STORAGE_KEY = (typeof window !== 'undefined' && window.STORAGE_KEY) || 'paperdict_annotations';
+  const annotationManager = typeof AnnotationManager !== 'undefined' ? new AnnotationManager() : null;
+  const navNotesCount = document.getElementById('nav-notes-count');
+  const notesTotal = document.getElementById('notes-total');
+  const notesList = document.getElementById('notes-list');
+  const btnExportNotesMd = document.getElementById('btn-export-notes-md');
+  const btnExportNotesJson = document.getElementById('btn-export-notes-json');
+  const btnClearNotes = document.getElementById('btn-clear-notes');
+
+  async function updateNotesBadge() {
+    if (!annotationManager) return;
+    const all = await annotationManager.loadAll();
+    if (navNotesCount) navNotesCount.textContent = all.length;
+    if (notesTotal) notesTotal.textContent = all.length;
+  }
+  updateNotesBadge();
+
+  async function loadNotes() {
+    if (!annotationManager) return;
+    const all = await annotationManager.loadAll();
+    updateNotesBadge();
+
+    if (!notesList) return;
+    if (all.length === 0) {
+      notesList.innerHTML = '<div class="empty-hint">暂无论文批注与高亮，划选学术内容后点击颜色即可高亮，点击“笔记”即可创建！</div>';
+      return;
+    }
+
+    const colorBadges = {
+      yellow: '[核心]',
+      green:  '[方法]',
+      blue:   '[结论]',
+      pink:   '[疑问]'
+    };
+
+    notesList.innerHTML = all.slice().reverse().map((item) => `
+      <div class="word-card-item">
+        <div class="word-card-info" style="width:100%;">
+          <div class="word-card-head" style="justify-content:space-between;margin-bottom:4px;">
+            <span style="font-size:11px;font-weight:600;color:#64748b;">${colorBadges[item.color] || '[要点]'} ${escapeHtml(item.docTitle || '学术文献')}</span>
+            <span style="font-size:10px;color:#94a3b8;">${new Date(item.createdAt).toLocaleDateString()}</span>
+          </div>
+          <div style="font-size:12.5px;color:#1e293b;background:#f8fafc;padding:5px 8px;border-left:3px solid #cbd5e1;border-radius:3px;margin-bottom:4px;word-break:break-word;">
+            “${escapeHtml(item.text)}”
+          </div>
+          ${item.note ? `<div style="font-size:12px;color:#2563eb;font-weight:500;">批注: ${escapeHtml(item.note)}</div>` : ''}
+        </div>
+        <button class="btn-del-note" data-id="${item.id}" title="删除此批注" style="background:none;border:none;color:#94a3b8;cursor:pointer;padding:4px;font-size:13px;">✕</button>
+      </div>
+    `).join('');
+
+    const delBtns = notesList.querySelectorAll('.btn-del-note');
+    delBtns.forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await annotationManager.deleteAnnotation(btn.dataset.id);
+        loadNotes();
+      });
+    });
+  }
+
   function resetGlossaryEditor() {
     editingGlossarySource = '';
     if (glossarySource) glossarySource.value = '';
@@ -903,6 +978,36 @@ document.addEventListener('DOMContentLoaded', () => {
           enabledGlossaryPacks,
           '术语已删除'
         );
+      }
+    });
+  }
+
+  if (btnExportNotesMd) {
+    btnExportNotesMd.addEventListener('click', async () => {
+      if (!annotationManager) return;
+      const all = await annotationManager.loadAll();
+      if (all.length === 0) return alert('当前没有可导出的论文批注与笔记');
+      const md = AnnotationManager.exportToMarkdown(all, '学术文献阅读与批注集锦', { isMultiDoc: true });
+      downloadFile(md, 'paperdict_reading_notes.md', 'text/markdown;charset=utf-8;');
+    });
+  }
+
+  if (btnExportNotesJson) {
+    btnExportNotesJson.addEventListener('click', async () => {
+      if (!annotationManager) return;
+      const all = await annotationManager.loadAll();
+      if (all.length === 0) return alert('当前没有可导出的论文批注与笔记');
+      const json = AnnotationManager.exportToJson(all);
+      downloadFile(json, 'paperdict_annotations.json', 'application/json;charset=utf-8;');
+    });
+  }
+
+  if (btnClearNotes) {
+    btnClearNotes.addEventListener('click', async () => {
+      if (confirm('确定要清空所有论文笔记与批注记录吗？此操作不可恢复。')) {
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ [ANNOTATION_STORAGE_KEY]: [] }, () => loadNotes());
+        }
       }
     });
   }
