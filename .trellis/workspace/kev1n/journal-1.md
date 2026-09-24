@@ -103,6 +103,55 @@ Fixed formula-currency collisions in FormulaProtector, enhanced observer teardow
 
 ### Next Steps
 
-- None - v2.2.0 published
+- Monitor PR #2 updates from contributor
+
+## 2026-09-21 - Review PR #2 (v2.3 Academic Reading Workbench)
+
+### Summary
+
+- Inspected new Pull Request #2 from `EIR9264:main` ("feat: v2.3 深度学术阅读工作台").
+- Verified all 7 test suites with 190 assertions passed completely.
+- Identified 2 minor points for improvement (escaped HTML in reader drawer and bumped version to 2.3.0).
+- Contributor updated and PR #2 was successfully merged into `main`.
+
+### Status
+
+[OK] **Merged**
+
+## 2026-09-24 - Review & Merge PR #3 (Academic Translation Workflow & Maintenance)
+
+### Summary
+
+- Inspected Pull Request #3 from `Jackeyliu37:fix/translation-maintenance` ("fix: improve academic translation workflow and merge v2.3 reading tools").
+- Full evaluation of 37 changed files (+8,179 / -625 lines) covering:
+  1. Standardized English-only source text validation across selection cards, page translation, and PDF reader (`DictService.isEnglishSourceText`).
+  2. Professional Academic Glossary System with 5 built-in discipline packs (`extension/glossaries/`), user glossary CSV/JSON import/export, and indexed regex boundary protection (`PDTERM_n`).
+  3. Strict translation engine routing (`TranslationService`) with OpenAI compatible API & DeepL support, no silent public engine fallbacks on private errors, secure `chrome.storage.local` API Key storage, and Popup connection testing.
+  4. Real-time selection range anchoring (`SelectionAnchor`) supporting smooth positioning during scroll/resize and async request generation isolation.
+  5. Extension reload recovery via `tab_bridge.js` to avoid orphaned content script disconnects.
+- Executed full test suite locally:
+  - `npm test`: 11 test suites, 346 assertions passed.
+  - `npm run test:diagnostics`: 0 critical UX defects.
+- Submitted approved review and successfully merged PR #3 into `main`.
+- Pulled latest `main` locally.
+
+### Status
+
+[OK] **Completed & Merged**
+
+## 2026-09-24 - Release v2.3.0 (Academic Reading Workbench & Glossary Maintenance)
+
+### Summary
+
+- Updated `.github/workflows/release.yml` with comprehensive v2.3.0 release notes and upgraded automated test step to `npm test`.
+- Tagged `v2.3.0` and pushed tag to trigger GitHub Actions automated packaging and publication.
+- Release artifact: `paperdict-v2.3.0.zip`.
+
+### Status
+
+[OK] **Published**
+
+
+
 
 
