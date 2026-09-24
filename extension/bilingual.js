@@ -43,6 +43,17 @@
     'PAPERDICT-BILINGUAL-CAPSULE-HOST'
   ]);
 
+  function getViewportSafePosition(rect, viewportWidth, viewportHeight, padding = 8) {
+    const width = Math.max(0, Number(rect && rect.width) || 0);
+    const height = Math.max(0, Number(rect && rect.height) || 0);
+    const maxLeft = Math.max(padding, viewportWidth - width - padding);
+    const maxTop = Math.max(padding, viewportHeight - height - padding);
+    return {
+      left: Math.min(maxLeft, Math.max(padding, Number(rect && rect.left) || padding)),
+      top: Math.min(maxTop, Math.max(padding, Number(rect && rect.top) || padding))
+    };
+  }
+
   function getAriaRoleTokens(el) {
     if (!el || typeof el.getAttribute !== 'function') return [];
     return String(el.getAttribute('role') || '')
@@ -637,6 +648,7 @@
       this.host = null;
       this.shadow = null;
       this.stats = { total: 0, translated: 0 };
+      this.resizeHandler = null;
     }
 
     hideCapsule() {
@@ -649,10 +661,14 @@
     }
 
     destroy() {
+      if (this.resizeHandler && typeof window !== 'undefined') {
+        window.removeEventListener('resize', this.resizeHandler);
+      }
       if (this.host) this.host.remove();
       this.host = null;
       this.shadow = null;
       this.isExpanded = false;
+      this.resizeHandler = null;
     }
 
     init() {
@@ -735,6 +751,7 @@
           .capsule-panel {
             display: none;
             width: 290px;
+            max-width: calc(100vw - 16px);
             background: #ffffff;
             border-radius: 14px;
             border: 1px solid #e2e8f0;
@@ -991,6 +1008,7 @@
         this.isExpanded = true;
         pill.classList.add('hidden');
         panel.classList.add('visible');
+        this.keepPanelInViewport(panel);
       });
 
       btnMin.addEventListener('click', () => {
@@ -1013,6 +1031,11 @@
         });
       }
 
+      this.resizeHandler = () => {
+        if (this.isExpanded) this.keepPanelInViewport(panel);
+      };
+      window.addEventListener('resize', this.resizeHandler, { passive: true });
+
       const modeBtns = this.shadow.querySelectorAll('.mode-btn');
       modeBtns.forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -1020,6 +1043,24 @@
           if (this.onModeChange) this.onModeChange(m);
         });
       });
+    }
+
+    keepPanelInViewport(panel) {
+      if (!this.host || !panel || typeof panel.getBoundingClientRect !== 'function') return;
+      const panelRect = panel.getBoundingClientRect();
+      const safeRect = Object.assign({}, panelRect, {
+        width: Math.max(panelRect.width || 0, panel.scrollWidth || 0),
+        height: Math.max(panelRect.height || 0, panel.scrollHeight || 0)
+      });
+      const safePosition = getViewportSafePosition(safeRect, window.innerWidth, window.innerHeight);
+      const hostRect = this.host.getBoundingClientRect();
+      const nextLeft = hostRect.left + safePosition.left - panelRect.left;
+      const nextTop = hostRect.top + safePosition.top - panelRect.top;
+      if (Math.abs(nextLeft - hostRect.left) < 1 && Math.abs(nextTop - hostRect.top) < 1) return;
+      this.host.style.left = `${nextLeft}px`;
+      this.host.style.top = `${nextTop}px`;
+      this.host.style.right = 'auto';
+      this.host.style.transform = 'none';
     }
 
     setMode(mode) {
@@ -2221,12 +2262,14 @@
       FormulaProtector,
       AcademicFilter,
       PaperBilingualManager,
+      getViewportSafePosition,
       reattachExistingManager,
       getAriaRoleTokens,
       isLinkElement
     };
   } else {
     global.PaperBilingualManager = PaperBilingualManager;
+    global.getViewportSafePosition = getViewportSafePosition;
     global.FormulaProtector = FormulaProtector;
     global.AcademicFilter = AcademicFilter;
 
