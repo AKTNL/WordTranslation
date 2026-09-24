@@ -6,39 +6,36 @@
 /* Translated Paragraph Container in Bilingual Mode */
 .pd-bilingual-trans {
   display: block !important;
-  margin-top: 8px !important;
-  margin-bottom: 18px !important;
-  padding: 10px 16px !important;
-  background-color: #f8fafc !important;
-  border-left: 3.5px solid #3b82f6 !important;
-  border-radius: 0 8px 8px 0 !important;
-  color: #1e293b !important;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif !important;
-  font-size: 0.96em !important;
-  line-height: 1.75 !important;
-  letter-spacing: 0.2px !important;
-  text-align: justify !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
-  opacity: 1 !important;
-  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
-  animation: pdFadeSlideIn 0.28s ease-out forwards !important;
+  margin: 6px 0 18px !important;
+  padding: 4px 0 4px 12px !important;
+  background: transparent !important;
+  border-left: 3px solid #1c7c54 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: inherit !important;
+  font: inherit !important;
+  letter-spacing: 0 !important;
 }
 
-/* Headings Translation (H1-H6) in Bilingual Mode */
-h1 + .pd-bilingual-trans,
-h2 + .pd-bilingual-trans,
-h3 + .pd-bilingual-trans,
-h4 + .pd-bilingual-trans,
-h5 + .pd-bilingual-trans,
-h6 + .pd-bilingual-trans {
-  margin-top: 4px !important;
-  margin-bottom: 14px !important;
-  padding: 6px 14px !important;
-  background-color: #eff6ff !important;
-  border-left-color: #2563eb !important;
-  font-weight: 600 !important;
-  font-size: 0.9em !important;
-  color: #1d4ed8 !important;
+.pd-translation-label {
+  margin: 0 0 4px !important;
+  color: #1c7c54 !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
+  letter-spacing: 0 !important;
+}
+
+.pd-translation-content {
+  color: inherit !important;
+  font-family: var(--pd-source-font-family, inherit) !important;
+  font-size: var(--pd-source-font-size, inherit) !important;
+  font-weight: var(--pd-source-font-weight, inherit) !important;
+  line-height: var(--pd-source-line-height, inherit) !important;
+  font-style: var(--pd-source-font-style, inherit) !important;
+  text-align: var(--pd-source-text-align, inherit) !important;
+  letter-spacing: 0 !important;
 }
 
 /* Shimmer Loading State Placeholder */
@@ -58,6 +55,43 @@ h6 + .pd-bilingual-trans {
   color: #64748b !important;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
   user-select: none !important;
+}
+
+.pd-bilingual-error {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin: 6px 0 18px !important;
+  padding: 4px 0 4px 12px !important;
+  background: transparent !important;
+  border-left: 3px solid #b42318 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: inherit !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  letter-spacing: 0 !important;
+}
+
+.pd-translation-error-message {
+  color: #b42318 !important;
+  font-size: 12px !important;
+  letter-spacing: 0 !important;
+}
+
+.pd-translation-retry {
+  padding: 2px 7px !important;
+  border: 1px solid #1c7c54 !important;
+  border-radius: 3px !important;
+  background: transparent !important;
+  color: #1c7c54 !important;
+  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  letter-spacing: 0 !important;
+  cursor: pointer !important;
+}
+
+.pd-translation-retry:hover,
+.pd-translation-retry:focus-visible {
+  background: #edf7f2 !important;
 }
 
 .pd-loading-spinner {
@@ -90,40 +124,14 @@ html[data-paperdict-mode="chinese"] .pd-orig-hidden {
 
 html[data-paperdict-mode="chinese"] .pd-bilingual-trans {
   background: transparent !important;
-  border-left: none !important;
   box-shadow: none !important;
-  padding: 0 !important;
-  margin-top: 0 !important;
-  margin-bottom: 16px !important;
-  font-size: 1.02em !important;
-  line-height: 1.8 !important;
-  color: inherit !important;
-}
-
-html[data-paperdict-mode="chinese"] h1 + .pd-bilingual-trans {
-  font-size: 1.8em !important;
-  font-weight: 700 !important;
-  color: inherit !important;
-}
-
-html[data-paperdict-mode="chinese"] h2 + .pd-bilingual-trans {
-  font-size: 1.4em !important;
-  font-weight: 600 !important;
-  color: inherit !important;
-  border-bottom: 1px solid #e2e8f0 !important;
-  padding-bottom: 4px !important;
-  margin-top: 24px !important;
-}
-
-html[data-paperdict-mode="chinese"] h3 + .pd-bilingual-trans {
-  font-size: 1.2em !important;
-  font-weight: 600 !important;
   color: inherit !important;
 }
 
 /* Restore Mode (原版英文模式 - 隐藏所有译文) */
 html[data-paperdict-mode="original"] .pd-bilingual-trans,
-html[data-paperdict-mode="original"] .pd-bilingual-loading {
+html[data-paperdict-mode="original"] .pd-bilingual-loading,
+html[data-paperdict-mode="original"] .pd-bilingual-error {
   display: none !important;
 }
 

@@ -1,0 +1,27 @@
+{
+  "id": "materials-engineering",
+  "name": "材料与工程",
+  "version": 1,
+  "terms": [
+    { "source": "additive manufacturing", "target": "增材制造" },
+    { "source": "composite material", "target": "复合材料" },
+    { "source": "corrosion resistance", "target": "耐腐蚀性" },
+    { "source": "crystal structure", "target": "晶体结构" },
+    { "source": "electrical conductivity", "target": "电导率" },
+    { "source": "energy-dispersive x-ray spectroscopy", "target": "能量色散 X 射线光谱" },
+    { "source": "fatigue life", "target": "疲劳寿命" },
+    { "source": "finite element analysis", "target": "有限元分析" },
+    { "source": "fracture toughness", "target": "断裂韧性" },
+    { "source": "grain boundary", "target": "晶界" },
+    { "source": "heat treatment", "target": "热处理" },
+    { "source": "phase transition", "target": "相变" },
+    { "source": "scanning electron microscopy", "target": "扫描电子显微镜" },
+    { "source": "stress-strain curve", "target": "应力-应变曲线" },
+    { "source": "surface morphology", "target": "表面形貌" },
+    { "source": "tensile strength", "target": "抗拉强度" },
+    { "source": "thermal conductivity", "target": "热导率" },
+    { "source": "transmission electron microscopy", "target": "透射电子显微镜" },
+    { "source": "x-ray diffraction", "target": "X 射线衍射" },
+    { "source": "yield strength", "target": "屈服强度" }
+  ]
+}

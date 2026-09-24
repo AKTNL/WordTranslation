@@ -252,7 +252,7 @@
 
       // Single Paper Comprehensive Reading Notes
       const paperUrl = options.url || (annotations[0] && annotations[0].url) || '';
-      
+
       let md = `---\n`;
       md += `title: "${(docTitle || 'Paper Reading Notes').replace(/"/g, '\\"')}"\n`;
       if (paperUrl) md += `url: "${paperUrl}"\n`;

@@ -1,0 +1,27 @@
+{
+  "id": "general-academic",
+  "name": "通用学术与统计",
+  "version": 1,
+  "terms": [
+    { "source": "ablation study", "target": "消融实验" },
+    { "source": "alternative hypothesis", "target": "备择假设" },
+    { "source": "baseline model", "target": "基线模型" },
+    { "source": "benchmark dataset", "target": "基准数据集" },
+    { "source": "confidence interval", "target": "置信区间" },
+    { "source": "control group", "target": "对照组" },
+    { "source": "data collection", "target": "数据收集" },
+    { "source": "effect size", "target": "效应量" },
+    { "source": "experimental group", "target": "实验组" },
+    { "source": "literature review", "target": "文献综述" },
+    { "source": "null hypothesis", "target": "零假设" },
+    { "source": "p-value", "target": "p 值" },
+    { "source": "randomized controlled trial", "target": "随机对照试验" },
+    { "source": "research question", "target": "研究问题" },
+    { "source": "sample size", "target": "样本量" },
+    { "source": "standard deviation", "target": "标准差" },
+    { "source": "state-of-the-art", "target": "当前最先进的" },
+    { "source": "statistical significance", "target": "统计显著性" },
+    { "source": "systematic review", "target": "系统综述" },
+    { "source": "reproducibility", "target": "可复现性" }
+  ]
+}

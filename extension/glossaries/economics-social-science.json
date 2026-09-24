@@ -1,0 +1,27 @@
+{
+  "id": "economics-social-science",
+  "name": "经济与社会科学",
+  "version": 1,
+  "terms": [
+    { "source": "causal inference", "target": "因果推断" },
+    { "source": "consumer price index", "target": "消费者价格指数" },
+    { "source": "difference-in-differences", "target": "双重差分" },
+    { "source": "endogeneity problem", "target": "内生性问题" },
+    { "source": "fixed effects model", "target": "固定效应模型" },
+    { "source": "gross domestic product", "target": "国内生产总值" },
+    { "source": "instrumental variable", "target": "工具变量" },
+    { "source": "marginal effect", "target": "边际效应" },
+    { "source": "market equilibrium", "target": "市场均衡" },
+    { "source": "opportunity cost", "target": "机会成本" },
+    { "source": "panel data", "target": "面板数据" },
+    { "source": "propensity score matching", "target": "倾向得分匹配" },
+    { "source": "purchasing power parity", "target": "购买力平价" },
+    { "source": "random effects model", "target": "随机效应模型" },
+    { "source": "regression discontinuity design", "target": "回归不连续设计" },
+    { "source": "robustness check", "target": "稳健性检验" },
+    { "source": "selection bias", "target": "选择偏差" },
+    { "source": "social capital", "target": "社会资本" },
+    { "source": "time series", "target": "时间序列" },
+    { "source": "treatment effect", "target": "处理效应" }
+  ]
+}

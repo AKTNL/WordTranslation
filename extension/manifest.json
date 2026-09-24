@@ -43,9 +43,11 @@
       "js": [
         "dict/academic_dict.js",
         "dict_service.js",
+        "glossary_service.js",
         "annotation_manager.js",
         "glossary_extractor.js",
         "citation_parser.js",
+        "selection_anchor.js",
         "content.js",
         "bilingual.js"
       ],
@@ -58,6 +60,7 @@
       "resources": [
         "icons/*",
         "dict/*",
+        "glossaries/*",
         "reader/*",
         "bilingual.css"
       ],

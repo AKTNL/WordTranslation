@@ -623,7 +623,7 @@
           if (currentPara.length > 0) {
             const raw = currentPara.join('\n');
             const cleaned = dictService ? dictService.cleanPaperText(raw, true) : raw;
-            if (cleaned.length >= 15 && /[a-zA-Z]{2,}/.test(cleaned)) {
+            if (cleaned.length >= 15 && dictService && dictService.isEnglishSourceText(cleaned)) {
               paragraphs.push(cleaned);
             }
           }
@@ -637,7 +637,7 @@
     if (currentPara.length > 0) {
       const raw = currentPara.join('\n');
       const cleaned = dictService ? dictService.cleanPaperText(raw, true) : raw;
-      if (cleaned.length >= 15 && /[a-zA-Z]{2,}/.test(cleaned)) {
+      if (cleaned.length >= 15 && dictService && dictService.isEnglishSourceText(cleaned)) {
         paragraphs.push(cleaned);
       }
     }
@@ -685,8 +685,9 @@
           item.transDiv.innerHTML = finalText;
           item.status = 'done';
         } else {
+          const errorMessage = escapeHtml(res?.error || '翻译失败，请稍后重试');
           item.transDiv.innerHTML = `
-            <span style="color:#f87171;font-size:12px;">(翻译超时，请稍后重试)</span>
+            <span style="color:#f87171;font-size:12px;">(${errorMessage})</span>
             <button class="pdf-btn-retry" style="margin-left:6px;padding:1px 5px;font-size:11px;background:#334155;border:1px solid #475569;border-radius:3px;color:#93c5fd;cursor:pointer;">重试</button>
           `;
           const btnR = item.transDiv.querySelector('.pdf-btn-retry');

@@ -1,0 +1,27 @@
+{
+  "id": "biomedical",
+  "name": "医学与生命科学",
+  "version": 1,
+  "terms": [
+    { "source": "adverse event", "target": "不良事件" },
+    { "source": "case-control study", "target": "病例对照研究" },
+    { "source": "cell culture", "target": "细胞培养" },
+    { "source": "clinical outcome", "target": "临床结局" },
+    { "source": "cohort study", "target": "队列研究" },
+    { "source": "cross-sectional study", "target": "横断面研究" },
+    { "source": "diagnostic accuracy", "target": "诊断准确性" },
+    { "source": "double-blind study", "target": "双盲研究" },
+    { "source": "gene expression", "target": "基因表达" },
+    { "source": "hazard ratio", "target": "风险比" },
+    { "source": "immune response", "target": "免疫应答" },
+    { "source": "in vitro", "target": "体外" },
+    { "source": "in vivo", "target": "体内" },
+    { "source": "meta-analysis", "target": "荟萃分析" },
+    { "source": "odds ratio", "target": "优势比" },
+    { "source": "protein expression", "target": "蛋白表达" },
+    { "source": "randomized controlled trial", "target": "随机对照试验" },
+    { "source": "sensitivity and specificity", "target": "灵敏度和特异度" },
+    { "source": "survival analysis", "target": "生存分析" },
+    { "source": "treatment group", "target": "治疗组" }
+  ]
+}

@@ -7,6 +7,55 @@
 (function (global) {
   'use strict';
 
+  const isEnglishSourceText = typeof global.paperDictIsEnglishSourceText === 'function'
+    ? global.paperDictIsEnglishSourceText
+    : (typeof require === 'function'
+      ? require('./dict_service.js').isEnglishSourceText
+      : () => false);
+
+  // Explicit WAI-ARIA widgets, composites, and non-content landmarks are never paragraph sources.
+  const EXCLUDED_ARIA_ROLES = new Set([
+    'alertdialog', 'application', 'banner', 'button', 'checkbox', 'columnheader',
+    'combobox', 'complementary', 'contentinfo', 'dialog', 'form', 'grid', 'gridcell',
+    'link', 'listbox', 'menu', 'menubar', 'menuitem', 'menuitemcheckbox',
+    'menuitemradio', 'meter', 'navigation', 'option', 'progressbar', 'radio',
+    'radiogroup', 'row', 'rowgroup', 'rowheader', 'scrollbar', 'search', 'searchbox',
+    'separator', 'slider', 'spinbutton', 'switch', 'tab', 'tablist', 'textbox',
+    'toolbar', 'tooltip', 'tree', 'treegrid', 'treeitem'
+  ]);
+  // Descendant links remain eligible here; isLinkDense distinguishes prose links from navigation.
+  const EXCLUDED_DESCENDANT_ARIA_ROLES = new Set(
+    Array.from(EXCLUDED_ARIA_ROLES).filter((role) => role !== 'link')
+  );
+  const CONTENT_CANDIDATE_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, blockquote, li, div';
+  const DESCENDANT_SCAN_SELECTOR = [
+    'a', '[role]', '[contenteditable]', 'button', 'input', 'textarea', 'select',
+    'form', 'option', 'label', 'audio', 'video', 'iframe', 'svg', 'canvas',
+    'pre', 'code', 'math', 'script', 'style', 'noscript',
+    '.pd-bilingual-trans', '.pd-bilingual-loading', '.pd-bilingual-error',
+    '.pd-bilingual-fail', '.pd-mode-toast',
+    'paper-dict-host', 'paperdict-bilingual-capsule-host'
+  ].join(', ');
+  const DESCENDANT_BLOCKER_TAGS = new Set([
+    'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'FORM', 'OPTION', 'LABEL',
+    'AUDIO', 'VIDEO', 'IFRAME', 'SVG', 'CANVAS', 'PRE', 'CODE', 'MATH',
+    'SCRIPT', 'STYLE', 'NOSCRIPT', 'PAPER-DICT-HOST',
+    'PAPERDICT-BILINGUAL-CAPSULE-HOST'
+  ]);
+
+  function getAriaRoleTokens(el) {
+    if (!el || typeof el.getAttribute !== 'function') return [];
+    return String(el.getAttribute('role') || '')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+  }
+
+  function isLinkElement(el) {
+    const tag = String(el && el.tagName || '').toUpperCase();
+    return tag === 'A' || getAriaRoleTokens(el).includes('link');
+  }
+
   /**
    * 1. Formula & Structure Protection (FormulaProtector)
    * Prevents translation engines from garbling math formulas, LaTeX tokens, and MathML.
@@ -36,8 +85,7 @@
           const token = `${this.tokenPrefix}${tokenIndex++}`;
           tokenMap.set(token, {
             type: 'dom',
-            html: node.outerHTML,
-            rawText: node.textContent
+            rawText: node.textContent || ''
           });
           const placeholder = document.createTextNode(` ${token} `);
           node.parentNode.replaceChild(placeholder, node);
@@ -142,11 +190,8 @@
      * @returns {string} Restored HTML or text
      */
     restore(translatedText, tokenMap) {
-      if (!translatedText || !tokenMap || tokenMap.size === 0) {
-        return translatedText || '';
-      }
-
-      let restored = translatedText;
+      let restored = this.escapeHtml(translatedText || '');
+      if (!tokenMap || tokenMap.size === 0) return restored;
 
       // Resilient regex matching PDMATH_0, PDMATH 0, pdmath_0, PD MATH 0, PD-MATH-0, etc.
       const pattern = /PD\s*[-_]?\s*MATH\s*[_ \-:]*\s*(\d+)/gi;
@@ -156,11 +201,9 @@
         const info = tokenMap.get(canonicalKey);
         if (!info) return match;
 
-        if (info.type === 'dom') {
-          return `<span class="pd-math-formula">${info.html}</span>`;
-        }
-        if (info.type === 'latex_display' || info.type === 'latex_inline') {
-          return `<span class="pd-math-formula">${this.escapeHtml(info.text)}</span>`;
+        if (info.type === 'dom' || info.type === 'latex_display' || info.type === 'latex_inline') {
+          const formulaText = info.type === 'dom' ? info.rawText : info.text;
+          return `<span class="pd-math-formula">${this.escapeHtml(formulaText || '')}</span>`;
         }
         return match;
       });
@@ -188,15 +231,108 @@
       this.excludedTags = new Set([
         'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT', 'SELECT',
         'BUTTON', 'SVG', 'CANVAS', 'PRE', 'CODE', 'NAV', 'HEADER',
-        'FOOTER', 'ASIDE', 'PAPER-DICT-HOST', 'PAPERDICT-BILINGUAL-CAPSULE-HOST'
+        'FOOTER', 'ASIDE', 'FORM', 'OPTION', 'LABEL', 'AUDIO', 'VIDEO',
+        'IFRAME', 'MATH', 'PAPER-DICT-HOST', 'PAPERDICT-BILINGUAL-CAPSULE-HOST'
       ]);
 
       this.refHeadingRegex = /^\s*(?:(?:\[\d+\]|[0-9]+|[IVXLCDM]+)[\.\s\-]*)?(?:references|bibliography|works\s+cited|literature\s+cited|citations)(?:\s*(?:and|&)\s*(?:notes|sources|citations|references|further\s+reading))?\s*[:\.]?\s*$/i;
       this.excludedClassIdRegex = /(reference|bibliography|biblio|ref-list|footnote|author-notes|header|navbar|sidebar|footer|menu|comment|pager|pagination|disclaimer|copyright|doi-box)/i;
+      this.mathClassIdRegex = /(?:^|[\s_-])(?:formula|math|mathjax|katex|mjx-container)(?:$|[\s_-])/i;
+      this.semanticDivHintRegex = /(?:^|[\s_-])(?:paragraph|para|prose|abstract|article[-_]?text|body[-_]?text)(?:$|[\s_-])/i;
+      this.blockCandidateTags = new Set([
+        'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'LI'
+      ]);
     }
 
     isReferenceHeading(text) {
       return this.refHeadingRegex.test(String(text || '').trim());
+    }
+
+    hasExcludedRole(el, excludedRoles = EXCLUDED_ARIA_ROLES) {
+      return getAriaRoleTokens(el).some((role) => excludedRoles.has(role));
+    }
+
+    isCssHidden(el) {
+      if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return false;
+      try {
+        const style = window.getComputedStyle(el);
+        if (!style) return false;
+        const display = String(style.display || '').toLowerCase();
+        const visibility = String(style.visibility || '').toLowerCase();
+        return display === 'none' || visibility === 'hidden' || visibility === 'collapse';
+      } catch (error) {
+        return false;
+      }
+    }
+
+    getLinkStats(el) {
+      if (!el || String(el.tagName || '').toUpperCase() !== 'DIV' || typeof el.querySelectorAll !== 'function') {
+        return { count: 0, textLength: 0 };
+      }
+      const links = Array.from(new Set(
+        Array.from(el.querySelectorAll('a, [role]')).filter(isLinkElement)
+      ));
+      return {
+        count: links.length,
+        textLength: links.reduce((total, link) => {
+          return total + (link.innerText || link.textContent || '').replace(/\s+/g, ' ').trim().length;
+        }, 0)
+      };
+    }
+
+    isLinkDense(el, linkStats = null) {
+      if (!el || String(el.tagName || '').toUpperCase() !== 'DIV') return false;
+      const stats = linkStats || this.getLinkStats(el);
+      if (stats.count === 0) return false;
+      const textLength = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().length;
+      if (textLength === 0) return false;
+      const linkedRatio = Math.min(stats.textLength / textLength, 1);
+      const nonLinkedLength = Math.max(textLength - stats.textLength, 0);
+
+      if (stats.count === 1) return linkedRatio >= 0.8 && nonLinkedLength < 20;
+      return linkedRatio >= 0.5 || (stats.count >= 4 && linkedRatio >= 0.35);
+    }
+
+    getClassName(el) {
+      if (!el) return '';
+      return typeof el.className === 'string'
+        ? el.className
+        : (el.getAttribute ? el.getAttribute('class') || '' : '');
+    }
+
+    isGeneratedNode(el) {
+      return Boolean(el && el.classList && (
+        el.classList.contains('pd-bilingual-trans') ||
+        el.classList.contains('pd-bilingual-loading') ||
+        el.classList.contains('pd-bilingual-error') ||
+        el.classList.contains('pd-bilingual-fail') ||
+        el.classList.contains('pd-mode-toast')
+      ));
+    }
+
+    isSelfStructurallyExcluded(el) {
+      if (!el || !el.tagName) return true;
+      const tag = el.tagName.toUpperCase();
+      if (this.excludedTags.has(tag) || this.isGeneratedNode(el) || this.hasExcludedRole(el)) return true;
+
+      const id = el.id || '';
+      const className = this.getClassName(el);
+      if (
+        this.excludedClassIdRegex.test(id) ||
+        this.excludedClassIdRegex.test(className) ||
+        this.mathClassIdRegex.test(id) ||
+        this.mathClassIdRegex.test(className)
+      ) {
+        return true;
+      }
+
+      if (el.getAttribute) {
+        const contentEditable = el.getAttribute('contenteditable');
+        if (contentEditable !== null && String(contentEditable).toLowerCase() !== 'false') return true;
+        if (String(el.getAttribute('aria-hidden') || '').toLowerCase() === 'true') return true;
+      }
+
+      return el.hidden === true || Boolean(el.dataset && el.dataset.pdExclude === 'true');
     }
 
     /**
@@ -204,43 +340,93 @@
      */
     isExcluded(el) {
       if (!el || !el.tagName) return true;
-
-      // Tag name check
-      if (this.excludedTags.has(el.tagName.toUpperCase())) return true;
-
-      // PaperDict UI element check
-      if (el.classList && (
-        el.classList.contains('pd-bilingual-trans') ||
-        el.classList.contains('pd-bilingual-loading') ||
-        el.classList.contains('pd-mode-toast')
-      )) {
-        return true;
-      }
-
-      // Check element and its ancestors
       let cur = el;
       while (cur && cur !== document.body && cur !== document.documentElement) {
-        const tag = cur.tagName ? cur.tagName.toUpperCase() : '';
-        if (this.excludedTags.has(tag)) return true;
-
-        const id = cur.id || '';
-        const className = typeof cur.className === 'string'
-          ? cur.className
-          : (cur.getAttribute ? cur.getAttribute('class') || '' : '');
-
-        if (this.excludedClassIdRegex.test(id) || this.excludedClassIdRegex.test(className)) {
-          return true;
-        }
-
-        // Check if marked as reference container
-        if (cur.dataset && cur.dataset.pdExclude === 'true') {
-          return true;
-        }
-
+        if (this.isSelfStructurallyExcluded(cur) || this.isCssHidden(cur)) return true;
         cur = cur.parentElement;
       }
-
       return false;
+    }
+
+    hasSemanticDivHint(el) {
+      if (!el || String(el.tagName || '').toUpperCase() !== 'DIV') return false;
+      return getAriaRoleTokens(el).includes('paragraph') ||
+        this.semanticDivHintRegex.test(`${el.id || ''} ${this.getClassName(el)}`);
+    }
+
+    isBlockingDescendantNode(el) {
+      if (!el || !el.tagName) return false;
+      const tag = el.tagName.toUpperCase();
+      if (DESCENDANT_BLOCKER_TAGS.has(tag) || this.isGeneratedNode(el)) return true;
+      if (this.hasExcludedRole(el, EXCLUDED_DESCENDANT_ARIA_ROLES)) return true;
+      if (!el.getAttribute) return false;
+      const contentEditable = el.getAttribute('contenteditable');
+      return contentEditable !== null && String(contentEditable).toLowerCase() !== 'false';
+    }
+
+    hasInteractiveDescendant(el) {
+      if (!el || typeof el.querySelectorAll !== 'function') return false;
+      return Array.from(el.querySelectorAll(DESCENDANT_SCAN_SELECTOR)).some((descendant) => {
+        return this.isBlockingDescendantNode(descendant);
+      });
+    }
+
+    hasNestedCandidateBlock(el) {
+      if (!el || typeof el.querySelectorAll !== 'function') return false;
+      const descendants = el.querySelectorAll(CONTENT_CANDIDATE_SELECTOR);
+      for (const descendant of descendants) {
+        if (this.isEligibleWithoutAggregate(descendant)) return true;
+      }
+      return false;
+    }
+
+    isSelfCandidateTag(el) {
+      const tag = String(el && el.tagName || '').toUpperCase();
+      if (this.blockCandidateTags.has(tag)) return true;
+      if (tag !== 'DIV') return false;
+      const text = (el.innerText || el.textContent || '').trim();
+      return this.hasSemanticDivHint(el) || text.length >= 40;
+    }
+
+    isSemanticParagraphDiv(el) {
+      if (!this.isSelfCandidateTag(el) || String(el.tagName || '').toUpperCase() !== 'DIV') return false;
+      if (this.hasInteractiveDescendant(el) || this.hasNestedCandidateBlock(el)) return false;
+      return true;
+    }
+
+    isCandidateTag(el) {
+      const tag = String(el && el.tagName || '').toUpperCase();
+      return this.blockCandidateTags.has(tag) || (tag === 'DIV' && this.isSemanticParagraphDiv(el));
+    }
+
+    isEligibleWithoutAggregate(el, options = {}) {
+      if (!this.isSelfCandidateTag(el)) return false;
+      const tag = el.tagName.toUpperCase();
+      const isExcluded = options.isExcluded || ((candidate) => this.isExcluded(candidate));
+      if (isExcluded(el)) return false;
+
+      if (tag === 'DIV') {
+        const isBlocked = options.isDivBlocked
+          ? options.isDivBlocked(el)
+          : this.hasInteractiveDescendant(el);
+        if (isBlocked) return false;
+        const linkStats = options.getLinkStats ? options.getLinkStats(el) : null;
+        if (this.isLinkDense(el, linkStats)) return false;
+      }
+
+      const rawText = (el.innerText || el.textContent || '').trim();
+      if (tag.startsWith('H')) {
+        if (rawText.length < 2) return false;
+        if (!options.allowReferenceHeading && this.isReferenceHeading(rawText)) return false;
+      } else if (rawText.length < 15) {
+        return false;
+      }
+
+      if (!isEnglishSourceText(rawText)) return false;
+      if (typeof window !== 'undefined' && el.offsetParent === null && el.offsetHeight === 0 && el.offsetWidth === 0) {
+        return false;
+      }
+      return true;
     }
 
     /**
@@ -249,33 +435,98 @@
     isEligible(el) {
       if (!el || !el.tagName) return false;
       const tag = el.tagName.toUpperCase();
+      if (tag === 'DIV' && this.hasNestedCandidateBlock(el)) return false;
+      return this.isEligibleWithoutAggregate(el);
+    }
 
-      // Check allowed block tags
-      const isAllowedTag = ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'LI'].includes(tag);
-      if (!isAllowedTag) return false;
+    createScanContext(container, candidates) {
+      const candidateSet = new Set(candidates);
+      const blockedDivs = new WeakSet();
+      const linkStats = new WeakMap();
+      const selfExcluded = new WeakMap();
+      const cssHidden = new WeakMap();
+      const inheritedExcluded = new WeakMap();
+      const helperSuppressed = new WeakMap();
 
-      if (this.isExcluded(el)) return false;
+      const isSelfExcluded = (el) => {
+        if (!selfExcluded.has(el)) {
+          selfExcluded.set(el, this.isSelfStructurallyExcluded(el));
+        }
+        return selfExcluded.get(el);
+      };
+      const isCssHidden = (el) => {
+        if (!cssHidden.has(el)) cssHidden.set(el, this.isCssHidden(el));
+        return cssHidden.get(el);
+      };
+      const isExcluded = (el) => {
+        if (!el || !el.tagName) return true;
+        if (inheritedExcluded.has(el)) return inheritedExcluded.get(el);
 
-      const rawText = (el.innerText || el.textContent || '').trim();
+        const path = [];
+        let cur = el;
+        let excluded = false;
+        while (cur && cur !== document.body && cur !== document.documentElement) {
+          if (inheritedExcluded.has(cur)) {
+            excluded = inheritedExcluded.get(cur);
+            break;
+          }
+          path.push(cur);
+          if (isSelfExcluded(cur) || isCssHidden(cur)) {
+            excluded = true;
+            break;
+          }
+          cur = cur.parentElement;
+        }
+        for (const node of path) inheritedExcluded.set(node, excluded);
+        return excluded;
+      };
+      const isHelperSuppressed = (el) => {
+        if (!el || !el.tagName) return true;
+        if (!helperSuppressed.has(el)) {
+          const ariaHidden = el.getAttribute &&
+            String(el.getAttribute('aria-hidden') || '').toLowerCase() === 'true';
+          const suppressed = el.hidden === true || ariaHidden || isCssHidden(el) ||
+            Boolean(el.parentElement && isExcluded(el.parentElement));
+          helperSuppressed.set(el, suppressed);
+        }
+        return helperSuppressed.get(el);
+      };
 
-      // Headings must have >= 2 chars, paragraphs must have >= 15 chars
-      if (tag.startsWith('H')) {
-        if (rawText.length < 2) return false;
-        // Don't translate the references heading itself
-        if (this.isReferenceHeading(rawText)) return false;
-      } else {
-        if (rawText.length < 15) return false;
+      const descendants = container.querySelectorAll(DESCENDANT_SCAN_SELECTOR);
+      for (const descendant of descendants) {
+        const blocksDiv = this.isBlockingDescendantNode(descendant);
+        const isLink = isLinkElement(descendant);
+        if ((!blocksDiv && !isLink) || isHelperSuppressed(descendant)) continue;
+
+        const linkTextLength = isLink
+          ? String(
+            typeof descendant.innerText === 'string'
+              ? descendant.innerText
+              : descendant.textContent || ''
+          ).replace(/\s+/g, ' ').trim().length
+          : 0;
+        let ancestor = descendant.parentElement;
+        while (ancestor && ancestor !== container.parentElement) {
+          if (candidateSet.has(ancestor) && String(ancestor.tagName || '').toUpperCase() === 'DIV') {
+            if (blocksDiv) blockedDivs.add(ancestor);
+            if (isLink) {
+              const stats = linkStats.get(ancestor) || { count: 0, textLength: 0 };
+              stats.count += 1;
+              stats.textLength += linkTextLength;
+              linkStats.set(ancestor, stats);
+            }
+          }
+          if (ancestor === container) break;
+          ancestor = ancestor.parentElement;
+        }
       }
 
-      // Must contain at least some English characters
-      if (!/[a-zA-Z]{2,}/.test(rawText)) return false;
-
-      // Ensure element is visible
-      if (typeof window !== 'undefined' && el.offsetParent === null && el.offsetHeight === 0 && el.offsetWidth === 0) {
-        return false;
-      }
-
-      return true;
+      return {
+        candidateSet,
+        isExcluded,
+        isDivBlocked: (el) => blockedDivs.has(el),
+        getLinkStats: (el) => linkStats.get(el) || { count: 0, textLength: 0 }
+      };
     }
 
     /**
@@ -305,9 +556,10 @@
      */
     findContentElements(root = document) {
       const container = this.findArticleContainer(root);
-      const candidates = container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, blockquote, li');
+      const candidates = Array.from(container.querySelectorAll(CONTENT_CANDIDATE_SELECTOR));
+      const scan = this.createScanContext(container, candidates);
 
-      const eligible = [];
+      const preliminary = [];
       let inReferenceSection = false;
       let refHeadingLevel = 2;
 
@@ -315,9 +567,15 @@
         const text = (el.innerText || el.textContent || '').trim();
         const tag = el.tagName.toUpperCase();
         const isHeading = tag.startsWith('H') && tag.length === 2;
+        const included = this.isEligibleWithoutAggregate(el, {
+          allowReferenceHeading: true,
+          isExcluded: scan.isExcluded,
+          isDivBlocked: scan.isDivBlocked,
+          getLinkStats: scan.getLinkStats
+        });
 
         // Detect entry into References section
-        if (isHeading && this.isReferenceHeading(text)) {
+        if (included && isHeading && this.isReferenceHeading(text)) {
           inReferenceSection = true;
           refHeadingLevel = parseInt(tag.charAt(1), 10) || 2;
           continue;
@@ -325,7 +583,7 @@
 
         if (inReferenceSection) {
           // If we reach another section heading at or above the reference level, reference section ended
-          if (isHeading && !this.isReferenceHeading(text)) {
+          if (included && isHeading && !this.isReferenceHeading(text)) {
             const level = parseInt(tag.charAt(1), 10) || 2;
             if (level <= refHeadingLevel || level <= 2) {
               inReferenceSection = false;
@@ -337,12 +595,25 @@
           }
         }
 
-        if (this.isEligible(el)) {
-          eligible.push(el);
+        if (included) preliminary.push(el);
+      }
+
+      const aggregateDivs = new WeakSet();
+      for (const el of preliminary) {
+        let ancestor = el.parentElement;
+        while (ancestor && ancestor !== container.parentElement) {
+          if (
+            scan.candidateSet.has(ancestor) &&
+            String(ancestor.tagName || '').toUpperCase() === 'DIV'
+          ) {
+            aggregateDivs.add(ancestor);
+          }
+          if (ancestor === container) break;
+          ancestor = ancestor.parentElement;
         }
       }
 
-      return eligible;
+      return preliminary.filter((el) => !aggregateDivs.has(el));
     }
   }
 
@@ -375,6 +646,13 @@
 
     disableCapsule() {
       this.hideCapsule();
+    }
+
+    destroy() {
+      if (this.host) this.host.remove();
+      this.host = null;
+      this.shadow = null;
+      this.isExpanded = false;
     }
 
     init() {
@@ -854,8 +1132,19 @@
 
       this.cache = new Map(); // text -> translatedText
       this.elements = []; // all eligible content elements
-      this.elementStateMap = new WeakMap(); // el -> { state: 'idle'|'queued'|'translating'|'done', transEl, rawText, tokenMap }
+      this.registeredElements = new Set();
+      this.trackedElements = new Set(); // all elements touched during the active page-mode session
+      this.ownedTranslationNodes = new Set();
+      this.elementStateMap = new WeakMap(); // el -> { state: 'idle'|'queued'|'translating'|'done'|'error', transEl, request fields }
       this.observer = null;
+      this.observedElements = new WeakSet();
+      this.mutationObserver = null;
+      this.nextRequestId = 0;
+      this.translationConfigGeneration = 0;
+      this.inFlightTranslations = new Map();
+      this.pageModeActive = false;
+      this.viewGeneration = 0;
+      this.activeRequestSlots = new Set();
 
       this.queue = [];
       this.activeRequests = 0;
@@ -863,6 +1152,11 @@
       this.activeRequestIds = new Set();
       this.reqCounter = 0;
       this.toastTimer = null;
+      this.onlineFallback = true;
+      this.isBlacklisted = false;
+      this.capsuleEnabled = true;
+      this.runtimeMessageListener = null;
+      this.runtimeListenerAttached = false;
     }
 
     init() {
@@ -870,6 +1164,7 @@
 
       // Setup Storage Sync & Initialize Capsule
       this.loadSettings();
+      this.setupStorageListener();
 
       // Initialize Viewport IntersectionObserver
       this.setupObserver();
@@ -877,9 +1172,14 @@
       // Setup Keyboard Shortcut Alt+B
       this.setupShortcut();
 
-      // Listen for runtime messages (from Popup or Context Menu)
-      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-        chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      this.setupRuntimeListener();
+    }
+
+    setupRuntimeListener() {
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.onMessage) return;
+      const onMessage = chrome.runtime.onMessage;
+      if (!this.runtimeMessageListener) {
+        this.runtimeMessageListener = (msg, sender, sendResponse) => {
           if (msg.type === 'SET_BILINGUAL_MODE') {
             this.setMode(msg.mode);
             sendResponse({ success: true, mode: this.mode });
@@ -898,8 +1198,16 @@
             sendResponse({ success: true, mode: this.mode });
             return true;
           }
-        });
+        };
       }
+
+      if (typeof onMessage.hasListener === 'function') {
+        if (onMessage.hasListener(this.runtimeMessageListener)) return;
+      } else if (this.runtimeListenerAttached) {
+        return;
+      }
+      onMessage.addListener(this.runtimeMessageListener);
+      this.runtimeListenerAttached = true;
     }
 
     initCapsule() {
@@ -907,6 +1215,7 @@
       this.capsule = new CapsuleUI({
         onModeChange: (newMode) => this.setMode(newMode),
         onHideCapsule: () => {
+          this.applyCapsuleEnabled(false);
           if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
             chrome.storage.sync.set({ capsuleEnabled: false });
           }
@@ -934,18 +1243,19 @@
           bilingualMode: 'original',
           bilingualDefault: false,
           capsuleEnabled: true,
+          onlineFallback: true,
           blacklist: []
         }, (items) => {
           if (items) {
+            this.applyOnlineFallback(items.onlineFallback !== false);
             const currentHost = (typeof window !== 'undefined' && window.location) ? window.location.hostname : '';
             if (items.blacklist && Array.isArray(items.blacklist) && items.blacklist.some(d => currentHost === d || currentHost.endsWith('.' + d))) {
               this.isBlacklisted = true;
+              this.applyCapsuleEnabled(items.capsuleEnabled !== false);
               return;
             }
 
-            if (items.capsuleEnabled !== false) {
-              this.initCapsule();
-            }
+            this.applyCapsuleEnabled(items.capsuleEnabled !== false);
 
             if (items.bilingualDefault && items.bilingualMode === 'original') {
               this.setMode('bilingual');
@@ -957,6 +1267,82 @@
       } else {
         this.initCapsule();
       }
+    }
+
+    setupStorageListener() {
+      if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.onChanged) return;
+      chrome.storage.onChanged.addListener((changes, area) => {
+        const translationConfigChanged = area === 'sync'
+          ? ['customEngine', 'customApiEndpoint', 'customModel', 'onlineFallback'].some((key) => changes[key])
+          : area === 'local' && Boolean(changes.glossaryVersion || changes.customApiKey);
+        if (area === 'sync' && changes.onlineFallback) {
+          this.applyOnlineFallback(changes.onlineFallback.newValue !== false);
+        }
+        if (translationConfigChanged) this.invalidateTranslationConfig();
+
+        if (area !== 'sync') return;
+        if (changes.capsuleEnabled) {
+          this.applyCapsuleEnabled(changes.capsuleEnabled.newValue !== false);
+        }
+        if (changes.blacklist) {
+          const currentHost = (typeof window !== 'undefined' && window.location) ? window.location.hostname : '';
+          const list = Array.isArray(changes.blacklist.newValue) ? changes.blacklist.newValue : [];
+          this.isBlacklisted = list.some((domain) => currentHost === domain || currentHost.endsWith('.' + domain));
+          this.applyCapsuleEnabled(this.capsuleEnabled);
+        }
+      });
+    }
+
+    applyOnlineFallback(enabled) {
+      this.onlineFallback = enabled !== false;
+      if (!this.onlineFallback && this.mode !== 'original') {
+        this.mode = 'original';
+        this.restoreOriginalView();
+      }
+    }
+
+    invalidateTranslationConfig() {
+      this.translationConfigGeneration++;
+      this.cache.clear();
+      this.inFlightTranslations.clear();
+      this.queue = [];
+
+      const elementsToReschedule = [];
+      for (const el of this.trackedElements) {
+        const info = this.elementStateMap.get(el);
+        if (!info) continue;
+        const wasTranslating = info.state === 'translating';
+        const requestEntry = info.requestEntry;
+        info.requestId = null;
+        info.requestGeneration = null;
+        info.requestViewGeneration = null;
+        info.requestEntry = null;
+        info.state = 'idle';
+        if (requestEntry && !wasTranslating) this.releaseRequestEntry(null, requestEntry);
+        this.removeTranslationNode(info);
+        if (el.classList && typeof el.classList.remove === 'function') {
+          el.classList.remove('pd-orig-hidden');
+        }
+        if (this.mode !== 'original' && this.isElementActive(el)) elementsToReschedule.push(el);
+      }
+
+      for (const el of elementsToReschedule) {
+        this.registerElement(el, { knownEligible: true });
+      }
+    }
+
+    applyCapsuleEnabled(enabled) {
+      this.capsuleEnabled = enabled !== false;
+      if (!this.capsuleEnabled || this.isBlacklisted) {
+        const capsule = this.capsule;
+        this.capsule = null;
+        if (capsule) {
+          if (typeof capsule.destroy === 'function') capsule.destroy();
+          else if (capsule.host) capsule.host.remove();
+        }
+        return;
+      }
+      this.initCapsule();
     }
 
     setupShortcut() {
@@ -978,8 +1364,13 @@
         for (const entry of entries) {
           if (entry.isIntersecting) {
             const el = entry.target;
+            if (this.observer && typeof this.observer.unobserve === 'function') {
+              this.observer.unobserve(el);
+            }
+            this.observedElements.delete(el);
+            if (!this.isElementActive(el)) continue;
             const state = this.elementStateMap.get(el);
-            if (!state || state.state === 'idle') {
+            if (state && state.state === 'idle') {
               this.enqueueElement(el);
             }
           }
@@ -988,6 +1379,372 @@
         root: null,
         rootMargin: '300px 0px 300px 0px',
         threshold: 0.01
+      });
+    }
+
+    isElementInViewport(el) {
+      if (!el || typeof el.getBoundingClientRect !== 'function' || typeof window === 'undefined') {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return Boolean(rect) &&
+        rect.bottom > 0 && rect.top < window.innerHeight &&
+        rect.right > 0 && rect.left < window.innerWidth;
+    }
+
+    isElementActive(el) {
+      return Boolean(el) && el.isConnected !== false && this.registeredElements.has(el);
+    }
+
+    isRequestCurrent(el, info, requestId, requestGeneration, requestViewGeneration) {
+      return this.mode !== 'original' && this.isElementActive(el) &&
+        this.elementStateMap.get(el) === info && info.requestId === requestId &&
+        info.requestGeneration === requestGeneration &&
+        info.requestViewGeneration === requestViewGeneration &&
+        this.translationConfigGeneration === requestGeneration &&
+        this.viewGeneration === requestViewGeneration;
+    }
+
+    acquireRequestSlot() {
+      const slot = { viewGeneration: this.viewGeneration, released: false };
+      this.activeRequestSlots.add(slot);
+      this.activeRequests = this.activeRequestSlots.size;
+      return slot;
+    }
+
+    releaseRequestSlot(slot) {
+      if (!slot || slot.released) return false;
+      slot.released = true;
+      this.activeRequestSlots.delete(slot);
+      this.activeRequests = this.activeRequestSlots.size;
+      return true;
+    }
+
+    releaseAllRequestSlots() {
+      for (const slot of [...this.activeRequestSlots]) this.releaseRequestSlot(slot);
+    }
+
+    getRequestEntryKey(generation, protectedText) {
+      return JSON.stringify([generation, protectedText]);
+    }
+
+    cleanupRequestEntry(entry) {
+      if (!entry || entry.leases !== 0) return;
+      if (this.inFlightTranslations.get(entry.mapKey) === entry) {
+        this.inFlightTranslations.delete(entry.mapKey);
+      }
+    }
+
+    retainRequestEntry(info, entry) {
+      if (!info || !entry) return false;
+      if (info.requestEntry === entry) return true;
+      if (info.requestEntry) this.releaseRequestEntry(info, info.requestEntry);
+      info.requestEntry = entry;
+      entry.leases++;
+      if (
+        entry.generation === this.translationConfigGeneration &&
+        !this.inFlightTranslations.has(entry.mapKey)
+      ) {
+        this.inFlightTranslations.set(entry.mapKey, entry);
+      }
+      return true;
+    }
+
+    releaseRequestEntry(info, entry) {
+      if (!entry) return;
+      if (info && info.requestEntry === entry) info.requestEntry = null;
+      entry.leases = Math.max(0, entry.leases - 1);
+      this.cleanupRequestEntry(entry);
+    }
+
+    createRequestEntry(info, generation, protectedText) {
+      const mapKey = this.getRequestEntryKey(generation, protectedText);
+      let entry = this.inFlightTranslations.get(mapKey);
+      if (!entry) {
+        entry = {
+          mapKey,
+          generation,
+          protectedText,
+          leases: 0,
+          settled: false,
+          promise: null
+        };
+        const request = Promise.resolve(this.requestTranslation(protectedText));
+        entry.promise = request.then(
+          (response) => {
+            entry.settled = true;
+            this.cleanupRequestEntry(entry);
+            return response;
+          },
+          (error) => {
+            entry.settled = true;
+            this.cleanupRequestEntry(entry);
+            throw error;
+          }
+        );
+        this.inFlightTranslations.set(mapKey, entry);
+      }
+      this.retainRequestEntry(info, entry);
+      return entry;
+    }
+
+    adoptRequestEntry(info, entries) {
+      if (!info || !entries) return;
+      const entry = entries.find((candidate) => {
+        return candidate && candidate.generation === this.translationConfigGeneration;
+      });
+      if (entry) this.retainRequestEntry(info, entry);
+    }
+
+    removeTranslationNode(info) {
+      if (!info || !info.transEl) return;
+      this.ownedTranslationNodes.delete(info.transEl);
+      if (typeof info.transEl.remove === 'function') info.transEl.remove();
+      info.transEl = null;
+    }
+
+    getElementSourceText(el) {
+      return String(el && (el.innerText || el.textContent) || '').trim();
+    }
+
+    invalidateElementSource(el, info, sourceText) {
+      if (!el || !info) return false;
+      const requestEntry = info.requestEntry;
+      const wasTranslating = info.state === 'translating';
+      this.queue = this.queue.filter((queued) => queued !== el);
+      info.requestId = null;
+      info.requestGeneration = null;
+      info.requestViewGeneration = null;
+      info.requestEntry = null;
+      info.sourceText = sourceText;
+      info.state = 'idle';
+      if (requestEntry && !wasTranslating) {
+        this.releaseRequestEntry(null, requestEntry);
+      } else if (
+        requestEntry && !requestEntry.settled && requestEntry.leases <= 1 &&
+        this.inFlightTranslations.get(requestEntry.mapKey) === requestEntry
+      ) {
+        this.inFlightTranslations.delete(requestEntry.mapKey);
+      }
+      this.removeTranslationNode(info);
+      if (el.classList && typeof el.classList.remove === 'function') {
+        el.classList.remove('pd-orig-hidden');
+      }
+      return true;
+    }
+
+    unregisterElement(el, options = {}) {
+      if (!el) return false;
+      const wasRegistered = this.registeredElements.delete(el);
+      this.trackedElements.delete(el);
+      this.observedElements.delete(el);
+      if (this.observer && typeof this.observer.unobserve === 'function') {
+        this.observer.unobserve(el);
+      }
+      this.queue = this.queue.filter((queued) => queued !== el);
+      if (wasRegistered) this.elements = this.elements.filter((registered) => registered !== el);
+
+      const info = this.elementStateMap.get(el);
+      if (info) {
+        const requestEntry = info.requestEntry;
+        const wasTranslating = info.state === 'translating';
+        info.requestId = null;
+        info.requestGeneration = null;
+        info.requestViewGeneration = null;
+        info.requestEntry = null;
+        info.state = 'idle';
+        if (requestEntry && !wasTranslating) {
+          this.releaseRequestEntry(null, requestEntry);
+        } else if (
+          requestEntry && !options.preserveRequestEntry &&
+          requestEntry.leases <= 1 &&
+          this.inFlightTranslations.get(requestEntry.mapKey) === requestEntry
+        ) {
+          this.inFlightTranslations.delete(requestEntry.mapKey);
+        }
+        this.removeTranslationNode(info);
+        this.elementStateMap.delete(el);
+      }
+      if (el.classList && typeof el.classList.remove === 'function') {
+        el.classList.remove('pd-orig-hidden');
+      }
+      return wasRegistered;
+    }
+
+    isWithinSubtree(el, root) {
+      if (!el || !root) return false;
+      if (el === root) return true;
+      if (typeof root.contains === 'function') return root.contains(el);
+      let current = el.parentElement;
+      while (current) {
+        if (current === root) return true;
+        current = current.parentElement;
+      }
+      return false;
+    }
+
+    unregisterSubtree(root) {
+      let changed = false;
+      for (const el of [...this.elements]) {
+        if (this.isWithinSubtree(el, root)) changed = this.unregisterElement(el) || changed;
+      }
+      return changed;
+    }
+
+    reconcileCandidateAncestors(el) {
+      const requestEntries = [];
+      let ancestor = el && el.parentElement;
+      while (ancestor) {
+        if (
+          this.registeredElements.has(ancestor) &&
+          String(ancestor.tagName || '').toUpperCase() === 'DIV'
+        ) {
+          const info = this.elementStateMap.get(ancestor);
+          if (info && info.requestEntry) requestEntries.push(info.requestEntry);
+          this.unregisterElement(ancestor, { preserveRequestEntry: true });
+        }
+        ancestor = ancestor.parentElement;
+      }
+      return requestEntries;
+    }
+
+    registerElement(el, options = {}) {
+      if (
+        !el || el.isConnected === false ||
+        (!options.knownEligible && !this.filter.isEligible(el))
+      ) {
+        return false;
+      }
+
+      let info = this.elementStateMap.get(el);
+      if (!info) {
+        info = { state: 'idle', transEl: null, sourceText: this.getElementSourceText(el) };
+        this.elementStateMap.set(el, info);
+      } else if (options.contentChanged) {
+        const sourceText = this.getElementSourceText(el);
+        if (info.sourceText !== sourceText) {
+          this.invalidateElementSource(el, info, sourceText);
+        }
+      }
+      this.trackedElements.add(el);
+      this.adoptRequestEntry(info, options.requestEntries);
+      if (!this.registeredElements.has(el)) {
+        this.registeredElements.add(el);
+        this.elements.push(el);
+      }
+      if (info.state !== 'idle') return false;
+
+      if (this.isElementInViewport(el) || !this.observer) {
+        if (this.observer && typeof this.observer.unobserve === 'function') {
+          this.observer.unobserve(el);
+        }
+        this.observedElements.delete(el);
+        this.enqueueElement(el);
+      } else if (!this.observedElements.has(el)) {
+        this.observer.observe(el);
+        this.observedElements.add(el);
+      }
+      return true;
+    }
+
+    registerElements(elements, options = {}) {
+      for (const el of elements || []) this.registerElement(el, options);
+    }
+
+    registerMutationRoot(root, includeDescendants = false, options = {}) {
+      if (!root || !root.tagName || root.isConnected === false || this.filter.isExcluded(root)) return false;
+      let changed = false;
+      const candidates = [];
+      if (this.filter.isEligible(root)) candidates.push(root);
+      else if (this.registeredElements.has(root)) changed = this.unregisterElement(root) || changed;
+      if (includeDescendants) candidates.push(...this.filter.findContentElements(root));
+
+      for (const candidate of new Set(candidates)) {
+        if (!candidate || candidate.isConnected === false) continue;
+        const requestEntries = this.reconcileCandidateAncestors(candidate);
+        changed = this.registerElement(candidate, {
+          knownEligible: true,
+          requestEntries,
+          contentChanged: options.contentChanged === true
+        }) || changed;
+      }
+      return changed;
+    }
+
+    registerMutationAncestors(root, options = {}) {
+      let changed = false;
+      let current = root;
+      while (current && current.tagName) {
+        const isEligible = this.filter.isEligible(current);
+        changed = this.registerMutationRoot(current, false, options) || changed;
+        if (isEligible || this.registeredElements.has(current)) break;
+        if (current === document.body || current === document.documentElement) break;
+        current = current.parentElement || null;
+      }
+      return changed;
+    }
+
+    getMutationElement(node) {
+      if (!node) return null;
+      if (node.nodeType === 1 || node.tagName) return node;
+      if (node.nodeType === 3) return node.parentElement || node.parentNode || null;
+      return null;
+    }
+
+    setupMutationObserver() {
+      if (this.mutationObserver || typeof MutationObserver === 'undefined') return;
+      this.mutationObserver = new MutationObserver((records) => {
+        if (this.mode === 'original') return;
+        let changed = false;
+        for (const record of records) {
+          let refreshTarget = record.type === 'characterData';
+
+          for (const node of record.removedNodes || []) {
+            const removedElement = this.getMutationElement(node);
+            if (removedElement && (node.nodeType === 1 || node.tagName)) {
+              changed = this.unregisterSubtree(removedElement) || changed;
+            }
+            if (!removedElement || this.filter.isExcluded(removedElement)) continue;
+            refreshTarget = true;
+          }
+
+          for (const node of record.addedNodes || []) {
+            const addedElement = this.getMutationElement(node);
+            if (!addedElement || this.filter.isExcluded(addedElement)) continue;
+            changed = this.registerMutationRoot(
+              addedElement,
+              node.nodeType === 1 || Boolean(node.tagName),
+              { contentChanged: true }
+            ) || changed;
+            refreshTarget = true;
+          }
+
+          if (record.type === 'characterData') {
+            const hydratedElement = this.getMutationElement(record.target);
+            changed = this.registerMutationAncestors(hydratedElement, { contentChanged: true }) || changed;
+          } else if (refreshTarget) {
+            changed = this.registerMutationAncestors(
+              this.getMutationElement(record.target),
+              { contentChanged: true }
+            ) || changed;
+          }
+        }
+        if (changed) {
+          this.updateCapsuleStats();
+        }
+      });
+    }
+
+    observeContentChanges() {
+      this.setupMutationObserver();
+      if (!this.mutationObserver || typeof document === 'undefined') return;
+      const target = document.body || document.documentElement;
+      if (!target) return;
+      this.mutationObserver.disconnect();
+      this.mutationObserver.observe(target, {
+        childList: true,
+        characterData: true,
+        subtree: true
       });
     }
 
@@ -1009,6 +1766,19 @@
      */
     setMode(newMode) {
       if (!['original', 'bilingual', 'chinese'].includes(newMode)) return;
+      if (newMode !== 'original' && !this.onlineFallback) {
+        this.showToast('整页翻译需要在线引擎，请先在设置中开启在线翻译');
+        return;
+      }
+      if (newMode === this.mode && newMode !== 'original' && this.pageModeActive) {
+        if (typeof document !== 'undefined' && document.documentElement) {
+          document.documentElement.dataset.paperdictMode = newMode;
+        }
+        if (this.capsule) this.capsule.setMode(newMode);
+        this.applyDisplayModeToAll();
+        this.updateCapsuleStats();
+        return;
+      }
       this.mode = newMode;
 
       // Update HTML dataset for global CSS rules
@@ -1045,25 +1815,24 @@
      * Discovers academic content elements and hooks observer
      */
     activateBilingualView() {
-      this.elements = this.filter.findContentElements(document);
-
+      if (!this.pageModeActive) {
+        this.pageModeActive = true;
+        this.viewGeneration++;
+      }
       // Cleanly re-observe elements
       if (this.observer) {
         this.observer.disconnect();
       }
+      this.observedElements = new WeakSet();
+      this.elements = [];
+      this.registeredElements.clear();
 
-      for (const el of this.elements) {
-        if (!this.elementStateMap.has(el)) {
-          this.elementStateMap.set(el, { state: 'idle', transEl: null });
-        }
-        if (this.observer) {
-          this.observer.observe(el);
-        }
-      }
+      const discovered = this.filter.findContentElements(document);
+      this.registerElements(discovered, { knownEligible: true });
+      this.observeContentChanges();
 
       this.updateCapsuleStats();
       this.applyDisplayModeToAll();
-      this.processQueue();
     }
 
     restoreOriginalView() {
@@ -1071,24 +1840,43 @@
       if (this.observer) {
         this.observer.disconnect();
       }
+      if (this.mutationObserver) {
+        this.mutationObserver.disconnect();
+      }
+      this.pageModeActive = false;
+      this.viewGeneration++;
+      this.releaseAllRequestSlots();
+      this.observedElements = new WeakSet();
 
-      // 2. Clear translation queue & cancel active in-flight requests
+      // 2. Reset every tracked item before clearing the queue. A page rescan may
+      // have removed an element from this.elements while it was still queued.
+      const pendingElements = new Set([...this.queue, ...this.elements, ...this.trackedElements]);
       this.queue = [];
       this.cancelActiveRequests();
-
-      // 3. Reset uncompleted queued items to idle and clean temporary loading shimmer
-      for (const el of this.elements) {
+      for (const el of pendingElements) {
         const info = this.elementStateMap.get(el);
-        if (info && info.state === 'queued') {
-          info.state = 'idle';
-          if (info.transEl && info.transEl.classList.contains('pd-bilingual-loading')) {
-            info.transEl.remove();
-            info.transEl = null;
-          }
+        if (!info) continue;
+        const wasTranslating = info.state === 'translating';
+        const requestEntry = info.requestEntry;
+        info.requestId = null;
+        info.requestGeneration = null;
+        info.requestViewGeneration = null;
+        info.requestEntry = null;
+        info.state = 'idle';
+        if (requestEntry && !wasTranslating) this.releaseRequestEntry(null, requestEntry);
+        this.removeTranslationNode(info);
+        if (el.classList && typeof el.classList.remove === 'function') {
+          el.classList.remove('pd-orig-hidden');
         }
       }
+      this.trackedElements.clear();
 
-      // 4. Hide all translation elements
+      for (const node of [...this.ownedTranslationNodes]) {
+        if (node && typeof node.remove === 'function') node.remove();
+      }
+      this.ownedTranslationNodes.clear();
+
+      // 3. Restore source visibility and refresh the capsule.
       this.applyDisplayModeToAll();
       this.updateCapsuleStats();
     }
@@ -1098,38 +1886,31 @@
         const info = this.elementStateMap.get(el);
         if (!info) continue;
 
-        if (this.mode === 'chinese') {
-          if (el.classList) el.classList.add('pd-orig-hidden');
-          if (info.transEl) {
-            info.transEl.style.display = 'block';
-            info.transEl.classList.add('full-chinese');
-          }
-        } else if (this.mode === 'bilingual') {
-          if (el.classList) el.classList.remove('pd-orig-hidden');
-          if (info.transEl) {
-            info.transEl.style.display = 'block';
-            info.transEl.classList.remove('full-chinese');
-          }
-        } else {
-          // Original mode
-          if (el.classList) el.classList.remove('pd-orig-hidden');
-          if (info.transEl) {
-            info.transEl.style.display = 'none';
-          }
+        const hasTranslation = info.state === 'done' && info.transEl &&
+          info.transEl.classList.contains('pd-bilingual-trans');
+        if (el.classList) {
+          if (this.mode === 'chinese' && hasTranslation) el.classList.add('pd-orig-hidden');
+          else el.classList.remove('pd-orig-hidden');
+        }
+        if (info.transEl) {
+          info.transEl.style.display = this.mode === 'original' ? 'none' : 'block';
+          if (hasTranslation) this.syncSourceTypography(el, info.transEl);
         }
       }
     }
 
     enqueueElement(el) {
-      const info = this.elementStateMap.get(el) || { state: 'idle' };
+      if (this.mode === 'original' || !this.isElementActive(el)) return;
+      const info = this.elementStateMap.get(el);
+      if (!info) return;
       if (info.state !== 'idle') return;
 
       info.state = 'queued';
       this.elementStateMap.set(el, info);
       this.queue.push(el);
 
-      // Render shimmer loading placeholder if in bilingual or chinese mode
-      if (this.mode !== 'original' && !info.transEl) {
+      // Render or restore the single generated node for this source paragraph.
+      if (this.mode !== 'original') {
         this.renderLoadingPlaceholder(el, info);
       }
 
@@ -1137,15 +1918,29 @@
     }
 
     renderLoadingPlaceholder(el, info) {
-      const placeholder = document.createElement('div');
+      let placeholder = info.transEl;
+      if (!placeholder) {
+        placeholder = document.createElement('div');
+        this.ownedTranslationNodes.add(placeholder);
+      }
       placeholder.className = 'pd-bilingual-loading';
       placeholder.innerHTML = `<span class="pd-loading-spinner"></span><span>正在就地速译...</span>`;
+      placeholder.style.display = 'block';
+      if (typeof placeholder.setAttribute === 'function') {
+        placeholder.setAttribute('role', 'status');
+        placeholder.setAttribute('aria-live', 'polite');
+      }
+      if (el.classList && typeof el.classList.remove === 'function') {
+        el.classList.remove('pd-orig-hidden');
+      }
 
       // Insert immediately following the original element
-      if (el.nextSibling) {
-        el.parentNode.insertBefore(placeholder, el.nextSibling);
-      } else {
-        el.parentNode.appendChild(placeholder);
+      if (!placeholder.parentNode) {
+        if (el.nextSibling) {
+          el.parentNode.insertBefore(placeholder, el.nextSibling);
+        } else {
+          el.parentNode.appendChild(placeholder);
+        }
       }
       info.transEl = placeholder;
     }
@@ -1153,21 +1948,36 @@
     async processQueue() {
       if (this.mode === 'original') return;
       if (this.activeRequests >= this.maxConcurrency) return;
-      if (this.queue.length === 0) return;
-
-      const el = this.queue.shift();
-      const info = this.elementStateMap.get(el);
-      if (!info) return;
+      let el = null;
+      let info = null;
+      while (this.queue.length > 0 && !el) {
+        const candidate = this.queue.shift();
+        const candidateInfo = this.elementStateMap.get(candidate);
+        if (!this.isElementActive(candidate) || !candidateInfo || candidateInfo.state !== 'queued') continue;
+        el = candidate;
+        info = candidateInfo;
+      }
+      if (!el || !info) return;
 
       info.state = 'translating';
-      this.activeRequests++;
+      const requestId = ++this.nextRequestId;
+      const requestGeneration = this.translationConfigGeneration;
+      const requestViewGeneration = this.viewGeneration;
+      info.requestId = requestId;
+      info.requestGeneration = requestGeneration;
+      info.requestViewGeneration = requestViewGeneration;
+      const requestSlot = this.acquireRequestSlot();
 
       try {
-        await this.translateElement(el, info);
+        await this.translateElement(el, info, requestId, requestGeneration, requestViewGeneration);
       } catch (err) {
         console.warn('Paragraph translation error:', err);
+        if (this.isRequestCurrent(el, info, requestId, requestGeneration, requestViewGeneration)) {
+          info.state = 'error';
+          this.renderTranslationError(el, info, err && err.message ? err.message : '网络超时');
+        }
       } finally {
-        this.activeRequests--;
+        this.releaseRequestSlot(requestSlot);
         this.updateCapsuleStats();
         // Continue queue processing
         this.processQueue();
@@ -1177,7 +1987,8 @@
     /**
      * Translates a single academic paragraph with formula protection & caching
      */
-    async translateElement(el, info) {
+    async translateElement(el, info, requestId, requestGeneration, requestViewGeneration) {
+      if (!this.isRequestCurrent(el, info, requestId, requestGeneration, requestViewGeneration)) return;
       const rawText = (el.innerText || el.textContent || '').trim();
       if (!rawText) {
         info.state = 'done';
@@ -1188,44 +1999,72 @@
       // Check cache first
       if (this.cache.has(rawText)) {
         const cachedTrans = this.cache.get(rawText);
-        this.renderTranslation(el, info, cachedTrans);
+        if (!this.isRequestCurrent(el, info, requestId, requestGeneration, requestViewGeneration)) return;
         info.state = 'done';
+        this.renderTranslation(el, info, cachedTrans);
         return;
       }
 
       // Protect math formulas and structure
       const { protectedText, tokenMap } = this.formulaProtector.protect(el);
 
-      // Perform online translation via background Service Worker
-      const response = await this.requestTranslation(protectedText);
+      if (!this.isRequestCurrent(el, info, requestId, requestGeneration, requestViewGeneration)) return;
+      const requestKey = this.getRequestEntryKey(requestGeneration, protectedText);
+      let requestEntry = info.requestEntry;
+      if (
+        !requestEntry || requestEntry.mapKey !== requestKey ||
+        requestEntry.generation !== requestGeneration
+      ) {
+        if (requestEntry) this.releaseRequestEntry(info, requestEntry);
+        requestEntry = this.createRequestEntry(info, requestGeneration, protectedText);
+      }
+      let response;
+      try {
+        response = await requestEntry.promise;
+      } finally {
+        this.releaseRequestEntry(info, requestEntry);
+      }
 
+      if (!this.isRequestCurrent(el, info, requestId, requestGeneration, requestViewGeneration)) return;
       if (response && response.success && response.translation) {
         // Restore protected formulas
         const restoredHtml = this.formulaProtector.restore(response.translation, tokenMap);
         this.cache.set(rawText, restoredHtml);
-        this.renderTranslation(el, info, restoredHtml);
         info.state = 'done';
+        this.renderTranslation(el, info, restoredHtml);
       } else {
-        // Translation failed
-        if (info.transEl) {
-          const errMsg = response?.error || '网络超时';
-          info.transEl.innerHTML = `
-            <div class="pd-bilingual-fail" style="display:flex;align-items:center;gap:8px;">
-              <span style="color:#ef4444;font-size:12px;">(翻译暂不可用: ${this.formulaProtector.escapeHtml(errMsg)})</span>
-              <button class="btn-retry-trans" style="padding:1px 6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;color:#2563eb;cursor:pointer;">🔄 重试</button>
-            </div>
-          `;
-          const btnRetry = info.transEl.querySelector('.btn-retry-trans');
-          if (btnRetry) {
-            btnRetry.onclick = (e) => {
-              e.stopPropagation();
-              info.state = 'idle';
-              this.enqueueElement(el);
-            };
-          }
-        }
-        info.state = 'idle'; // allow retry later
+        info.state = 'error';
+        this.renderTranslationError(el, info, response?.error || '网络超时');
       }
+    }
+
+    renderTranslationError(el, info, errorMessage) {
+      if (!info.transEl) this.renderLoadingPlaceholder(el, info);
+      info.transEl.className = 'pd-bilingual-error';
+      info.transEl.style.display = 'block';
+      if (typeof info.transEl.setAttribute === 'function') {
+        info.transEl.setAttribute('role', 'alert');
+        info.transEl.setAttribute('aria-live', 'assertive');
+      }
+      info.transEl.innerHTML = `
+        <div class="pd-translation-error-message">翻译暂不可用: ${this.formulaProtector.escapeHtml(errorMessage)}</div>
+        <button type="button" class="pd-translation-retry">重试</button>
+      `;
+      if (el.classList) el.classList.remove('pd-orig-hidden');
+
+      const retryButton = info.transEl.querySelector('.pd-translation-retry');
+      if (retryButton) {
+        retryButton.onclick = (event) => {
+          if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+          this.retryTranslation(el, info);
+        };
+      }
+    }
+
+    retryTranslation(el, info) {
+      if (!info || info.state !== 'error') return;
+      info.state = 'idle';
+      this.enqueueElement(el);
     }
 
     cancelActiveRequests() {
@@ -1238,11 +2077,18 @@
         this.activeRequestIds.clear();
       }
     }
-
     requestTranslation(text) {
       const requestId = `bilingual_${Date.now()}_${++this.reqCounter}`;
       this.activeRequestIds.add(requestId);
       return new Promise((resolve) => {
+        if (!this.onlineFallback) {
+          resolve({
+            success: false,
+            code: 'ONLINE_DISABLED',
+            error: '整页翻译需要在线引擎，请先在设置中开启在线翻译'
+          });
+          return;
+        }
         if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
           chrome.runtime.sendMessage({
             type: 'TRANSLATE_ONLINE',
@@ -1263,10 +2109,42 @@
       });
     }
 
+    syncSourceTypography(el, transEl) {
+      if (
+        !el || !transEl || !transEl.style ||
+        typeof transEl.style.setProperty !== 'function' ||
+        typeof window === 'undefined' || typeof window.getComputedStyle !== 'function'
+      ) {
+        return;
+      }
+
+      let sourceStyle;
+      try {
+        sourceStyle = window.getComputedStyle(el);
+      } catch (error) {
+        return;
+      }
+      if (!sourceStyle) return;
+
+      const typographyProperties = [
+        ['--pd-source-font-family', 'fontFamily'],
+        ['--pd-source-font-size', 'fontSize'],
+        ['--pd-source-font-weight', 'fontWeight'],
+        ['--pd-source-line-height', 'lineHeight'],
+        ['--pd-source-font-style', 'fontStyle'],
+        ['--pd-source-text-align', 'textAlign']
+      ];
+      for (const [customProperty, styleProperty] of typographyProperties) {
+        const value = String(sourceStyle[styleProperty] || '').trim();
+        if (value) transEl.style.setProperty(customProperty, value);
+      }
+    }
+
     renderTranslation(el, info, transHtml) {
       if (!info.transEl || !info.transEl.parentNode) {
         const transNode = document.createElement('div');
         transNode.className = 'pd-bilingual-trans';
+        this.ownedTranslationNodes.add(transNode);
         if (el.nextSibling) {
           el.parentNode.insertBefore(transNode, el.nextSibling);
         } else {
@@ -1277,15 +2155,18 @@
         info.transEl.className = 'pd-bilingual-trans';
       }
 
-      info.transEl.innerHTML = transHtml;
+      if (typeof info.transEl.removeAttribute === 'function') {
+        info.transEl.removeAttribute('role');
+        info.transEl.removeAttribute('aria-live');
+      }
+      this.syncSourceTypography(el, info.transEl);
+      info.transEl.innerHTML = `<div class="pd-translation-label">译文</div><div class="pd-translation-content">${transHtml}</div>`;
 
       if (this.mode === 'chinese') {
         if (el.classList) el.classList.add('pd-orig-hidden');
-        info.transEl.classList.add('full-chinese');
         info.transEl.style.display = 'block';
       } else if (this.mode === 'bilingual') {
         if (el.classList) el.classList.remove('pd-orig-hidden');
-        info.transEl.classList.remove('full-chinese');
         info.transEl.style.display = 'block';
       } else {
         if (el.classList) el.classList.remove('pd-orig-hidden');
@@ -1328,12 +2209,21 @@
     }
   }
 
+  function reattachExistingManager(manager) {
+    if (!manager) return false;
+    PaperBilingualManager.prototype.setupRuntimeListener.call(manager);
+    return true;
+  }
+
   // Export for browser and Node.js testing
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       FormulaProtector,
       AcademicFilter,
-      PaperBilingualManager
+      PaperBilingualManager,
+      reattachExistingManager,
+      getAriaRoleTokens,
+      isLinkElement
     };
   } else {
     global.PaperBilingualManager = PaperBilingualManager;
@@ -1353,6 +2243,11 @@
         window.location.href.includes('reader/reader.html')
       );
       if (isReaderPage) {
+        return;
+      }
+
+      if (global.paperBilingualManager) {
+        reattachExistingManager(global.paperBilingualManager);
         return;
       }
 
