@@ -2948,6 +2948,37 @@ test('icon trigger is consumed when lookup starts and does not return on scroll'
   assert.equal(trigger.classList.contains('visible'), false);
 });
 
+test('icon trigger suppresses the synthetic click that follows a drag', () => {
+  assert.match(contentJs, /let suppressTriggerClick = false/);
+  assert.match(contentJs, /suppressTriggerClick = true/);
+  assert.match(contentJs, /if \(isDraggingTrigger \|\| suppressTriggerClick\)/);
+  assert.match(contentJs, /suppressTriggerClick = false;[\s\S]{0,160}?return;/);
+});
+
+test('dragging the icon does not start a lookup', () => {
+  const harness = createContentHarness({ triggerMode: 'icon' });
+  harness.setDomSelection('alpha', {
+    left: 100, top: 100, right: 200, bottom: 120, width: 100, height: 20
+  });
+  harness.document.dispatch('mouseup', { composedPath: () => [] });
+  harness.flushTimers();
+
+  const trigger = harness.getShadowRoot().querySelector('#paper-dict-trigger-btn');
+  let prevented = false;
+  trigger.dispatch('mousedown', { clientX: 100, clientY: 100 });
+  harness.window.dispatch('mousemove', { clientX: 140, clientY: 140 });
+  harness.window.dispatch('mouseup', {
+    clientX: 140,
+    clientY: 140,
+    preventDefault() { prevented = true; }
+  });
+  trigger.dispatch('click', { stopPropagation() {} });
+
+  assert.equal(prevented, true);
+  assert.equal(harness.requests.length, 0);
+  assert.equal(trigger.classList.contains('visible'), true);
+});
+
 test('input and context-menu lookups dispose an existing DOM range anchor', async () => {
   const harness = createContentHarness();
   await showSelectionCard(harness, {
@@ -3120,6 +3151,26 @@ test('content script throttles visible card positioning on scroll and resize', (
   assert.match(contentJs, /window\.addEventListener\('scroll', scheduleSelectionCardPosition, \{ capture: true, passive: true \}\)/);
   assert.match(contentJs, /window\.addEventListener\('resize', scheduleSelectionCardPosition, \{ passive: true \}\)/);
   assert.match(contentJs, /clearActiveSelectionAnchor\(\);[\s\S]{0,100}?hideCard\(true\)/);
+});
+
+test('content script clamps oversized cards without inverted drag bounds', () => {
+  assert.match(contentJs, /function getCardDimensions\(\)/);
+  assert.match(contentJs, /function clampCardPosition\(left, top, viewportWidth, viewportHeight, dimensions, padding = 10\)/);
+  assert.match(contentJs, /const maxLeft = Math\.max\(padding, viewportWidth - dimensions\.width - padding\)/);
+  assert.match(contentJs, /const maxTop = Math\.max\(padding, viewportHeight - dimensions\.height - padding\)/);
+  assert.match(contentJs, /clampCardPosition\(\s*initialLeft \+ dx,\s*initialTop \+ dy/);
+  assert.doesNotMatch(contentJs, /Math\.min\(window\.innerWidth - cardEl\.offsetWidth - 10, initialLeft \+ dx\)/);
+});
+
+test('content card retries positioning after an initially unmeasurable layout', () => {
+  assert.match(contentJs, /function positionCard\(rect, retryLayout = true\)/);
+  assert.match(contentJs, /measured: offsetWidth > 0 && offsetHeight > 0 \|\| rectWidth > 0 && rectHeight > 0/);
+  assert.match(contentJs, /retryLayout && !dimensions\.measured[\s\S]{0,260}?requestAnimationFrame/);
+  assert.match(contentJs, /cardEl\.addEventListener\('mousedown', onMouseDown\)/);
+  assert.doesNotMatch(contentJs, /shadowRoot\.addEventListener\('mousedown', onMouseDown\)/);
+  assert.match(contentJs, /function getViewportSize\(\)/);
+  assert.match(contentJs, /documentElement && documentElement\.clientWidth/);
+  assert.match(contentJs, /const viewport = getViewportSize\(\)/);
 });
 
 test('content script delegates key filtering to the safe helper', () => {

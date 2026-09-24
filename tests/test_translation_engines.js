@@ -120,6 +120,45 @@ async function run() {
     }
   });
 
+  await test('falls back to Google when MyMemory rejects an oversized query', async () => {
+    const calls = [];
+    const longText = 'A'.repeat(501);
+    const service = new TranslationService({
+      fetchImpl: async (url) => {
+        calls.push(url);
+        if (url.includes('mymemory.translated.net')) {
+          return response(200, {
+            responseData: {
+              translatedText: 'QUERY LENGTH LIMIT EXCEEDED. MAX ALLOWED QUERY: 500 CHARS'
+            }
+          });
+        }
+        return response(200, { 0: [['长文本译文', longText]] });
+      }
+    });
+
+    const result = await service.translate(longText, { engine: 'default' });
+
+    assert.equal(result.success, true);
+    assert.equal(result.translation, '长文本译文');
+    assert.equal(calls.some((url) => url.includes('mymemory.translated.net')), false);
+    assert.equal(calls.some((url) => url.includes('translate.googleapis.com')), true);
+  });
+
+  await test('does not treat a MyMemory length error as a successful translation', async () => {
+    const service = new TranslationService({
+      fetchImpl: async (url) => url.includes('mymemory.translated.net')
+        ? response(200, { responseData: { translatedText: 'QUERY LENGTH EXCEEDED. MAX ALLOWED QUERY: 500 CHARS' } })
+        : response(200, { 0: [['回退译文']] })
+    });
+
+    const result = await service.translate('short text', { engine: 'default' });
+
+    assert.equal(result.success, true);
+    assert.equal(result.translation, '回退译文');
+    assert.equal(result.source, 'Google 在线翻译');
+  });
+
   await test('aborts requests that exceed the configured timeout', async () => {
     const service = new TranslationService({
       timeoutMs: 5,

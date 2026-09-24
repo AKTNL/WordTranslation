@@ -204,6 +204,16 @@ test('expanded capsule stays inside the viewport at the right edge', () => {
   assert.ok(position.top + 300 <= 800 - 8);
 });
 
+test('expanded capsule stays positioned and remains draggable from its header', () => {
+  assert.match(bilingualJs, /requestAnimationFrame\(\(\) => this\.keepPanelInViewport\(panel(?:, false)?\)\)/);
+  assert.match(bilingualJs, /panel-header/);
+  assert.match(bilingualJs, /this\.suppressPillClick/);
+  assert.match(bilingualJs, /capsule-pill.*panel-header/s);
+  assert.match(bilingualJs, /this\.host\.getBoundingClientRect\(\)/);
+  assert.match(bilingualJs, /panelAnchorLeft/);
+  assert.match(bilingualJs, /panelAnchorTop/);
+});
+
 test('popup exposes real API testing and glossary management controls', () => {
   assert.match(popupHtml, /id="btn-test-api"/);
   assert.match(popupHtml, /id="input-glossary-file"/);
