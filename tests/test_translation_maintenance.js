@@ -6,7 +6,8 @@ const { DictService } = require('../extension/dict_service.js');
 const {
   AcademicFilter,
   PaperBilingualManager,
-  reattachExistingManager
+  reattachExistingManager,
+  getViewportSafePosition
 } = require('../extension/bilingual.js');
 const { GlossaryService } = require('../extension/glossary_service.js');
 
@@ -188,6 +189,29 @@ test('capsule setting destroys and recreates the live capsule', () => {
   };
   manager.applyCapsuleEnabled(true);
   assert.notEqual(manager.capsule, null);
+});
+
+test('expanded capsule stays inside the viewport at the right edge', () => {
+  const position = getViewportSafePosition(
+    { left: 1160, top: 420, width: 290, height: 300 },
+    1280,
+    800,
+    8
+  );
+  assert.equal(position.left, 982);
+  assert.equal(position.top, 420);
+  assert.ok(position.left + 290 <= 1280 - 8);
+  assert.ok(position.top + 300 <= 800 - 8);
+});
+
+test('expanded capsule stays positioned and remains draggable from its header', () => {
+  assert.match(bilingualJs, /requestAnimationFrame\(\(\) => this\.keepPanelInViewport\(panel(?:, false)?\)\)/);
+  assert.match(bilingualJs, /panel-header/);
+  assert.match(bilingualJs, /this\.suppressPillClick/);
+  assert.match(bilingualJs, /capsule-pill.*panel-header/s);
+  assert.match(bilingualJs, /this\.host\.getBoundingClientRect\(\)/);
+  assert.match(bilingualJs, /panelAnchorLeft/);
+  assert.match(bilingualJs, /panelAnchorTop/);
 });
 
 test('popup exposes real API testing and glossary management controls', () => {

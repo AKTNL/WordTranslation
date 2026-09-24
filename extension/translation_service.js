@@ -177,15 +177,21 @@
 
     async translatePublic(text) {
       const engine = 'default';
-      const myMemoryUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`;
-      const myMemoryResponse = await this.request(myMemoryUrl, { method: 'GET' }, engine);
+      let myMemoryResponse = null;
+      // MyMemory rejects queries longer than 500 characters. Skip it for those
+      // requests so its limit message cannot be mistaken for a translation.
+      if (String(text || '').length <= 500) {
+        const myMemoryUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`;
+        myMemoryResponse = await this.request(myMemoryUrl, { method: 'GET' }, engine);
+      }
       if (myMemoryResponse && myMemoryResponse.ok) {
         try {
           const data = await myMemoryResponse.json();
           const translation = data && data.responseData
             ? String(data.responseData.translatedText || '').trim()
             : '';
-          if (translation && !translation.startsWith('MYMEMORY WARNING')) {
+          const isLimitError = /(?:query|text)\s+length|(?:max|maximum)\s+allowed\s+(?:query|text)|too\s+long/i.test(translation);
+          if (translation && !translation.startsWith('MYMEMORY WARNING') && !isLimitError) {
             return { success: true, translation, source: 'MyMemory 在线翻译', engine };
           }
         } catch (error) {}

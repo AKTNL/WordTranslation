@@ -43,6 +43,17 @@
     'PAPERDICT-BILINGUAL-CAPSULE-HOST'
   ]);
 
+  function getViewportSafePosition(rect, viewportWidth, viewportHeight, padding = 8) {
+    const width = Math.max(0, Number(rect && rect.width) || 0);
+    const height = Math.max(0, Number(rect && rect.height) || 0);
+    const maxLeft = Math.max(padding, viewportWidth - width - padding);
+    const maxTop = Math.max(padding, viewportHeight - height - padding);
+    return {
+      left: Math.min(maxLeft, Math.max(padding, Number(rect && rect.left) || padding)),
+      top: Math.min(maxTop, Math.max(padding, Number(rect && rect.top) || padding))
+    };
+  }
+
   function getAriaRoleTokens(el) {
     if (!el || typeof el.getAttribute !== 'function') return [];
     return String(el.getAttribute('role') || '')
@@ -637,6 +648,9 @@
       this.host = null;
       this.shadow = null;
       this.stats = { total: 0, translated: 0 };
+      this.resizeHandler = null;
+      this.suppressPillClick = false;
+      this.dragClickResetTimer = null;
     }
 
     hideCapsule() {
@@ -649,10 +663,19 @@
     }
 
     destroy() {
+      if (this.resizeHandler && typeof window !== 'undefined') {
+        window.removeEventListener('resize', this.resizeHandler);
+      }
+      if (this.dragClickResetTimer !== null && typeof clearTimeout === 'function') {
+        clearTimeout(this.dragClickResetTimer);
+      }
       if (this.host) this.host.remove();
       this.host = null;
       this.shadow = null;
       this.isExpanded = false;
+      this.resizeHandler = null;
+      this.dragClickResetTimer = null;
+      this.suppressPillClick = false;
     }
 
     init() {
@@ -735,6 +758,7 @@
           .capsule-panel {
             display: none;
             width: 290px;
+            max-width: calc(100vw - 16px);
             background: #ffffff;
             border-radius: 14px;
             border: 1px solid #e2e8f0;
@@ -988,9 +1012,17 @@
       }
 
       pill.addEventListener('click', () => {
+        if (this.suppressPillClick) {
+          this.suppressPillClick = false;
+          return;
+        }
         this.isExpanded = true;
         pill.classList.add('hidden');
         panel.classList.add('visible');
+        this.keepPanelInViewport(panel);
+        if (typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(() => this.keepPanelInViewport(panel, false));
+        }
       });
 
       btnMin.addEventListener('click', () => {
@@ -1013,6 +1045,11 @@
         });
       }
 
+      this.resizeHandler = () => {
+        if (this.isExpanded) this.keepPanelInViewport(panel);
+      };
+      window.addEventListener('resize', this.resizeHandler, { passive: true });
+
       const modeBtns = this.shadow.querySelectorAll('.mode-btn');
       modeBtns.forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -1020,6 +1057,43 @@
           if (this.onModeChange) this.onModeChange(m);
         });
       });
+    }
+
+    keepPanelInViewport(panel, retryLayout = true) {
+      if (!this.host || !panel || typeof panel.getBoundingClientRect !== 'function') return;
+      const panelRect = panel.getBoundingClientRect();
+      const panelWidth = Math.max(Number(panelRect.width) || 0, Number(panel.scrollWidth) || 0);
+      const panelHeight = Math.max(Number(panelRect.height) || 0, Number(panel.scrollHeight) || 0);
+      if (retryLayout && (!panelWidth || !panelHeight) && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(() => this.keepPanelInViewport(panel, false));
+        return;
+      }
+      const hostRect = this.host.getBoundingClientRect();
+      const panelAnchorLeft = panelWidth > 0 && Number.isFinite(panelRect.left)
+        ? panelRect.left
+        : hostRect.left;
+      const panelAnchorTop = panelHeight > 0 && Number.isFinite(panelRect.top)
+        ? panelRect.top
+        : hostRect.top;
+      const safeRect = Object.assign({}, panelRect, {
+        left: panelAnchorLeft,
+        top: panelAnchorTop,
+        width: panelWidth || 290,
+        height: panelHeight || 200
+      });
+      const documentElement = typeof document !== 'undefined' && document.documentElement
+        ? document.documentElement
+        : null;
+      const viewportWidth = Math.max(1, Number(window.innerWidth) || Number(documentElement && documentElement.clientWidth) || 1);
+      const viewportHeight = Math.max(1, Number(window.innerHeight) || Number(documentElement && documentElement.clientHeight) || 1);
+      const safePosition = getViewportSafePosition(safeRect, viewportWidth, viewportHeight);
+      const nextLeft = hostRect.left + safePosition.left - panelAnchorLeft;
+      const nextTop = hostRect.top + safePosition.top - panelAnchorTop;
+      if (Math.abs(nextLeft - hostRect.left) < 1 && Math.abs(nextTop - hostRect.top) < 1) return;
+      this.host.style.left = `${nextLeft}px`;
+      this.host.style.top = `${nextTop}px`;
+      this.host.style.right = 'auto';
+      this.host.style.transform = 'none';
     }
 
     setMode(mode) {
@@ -1084,9 +1158,14 @@
       let isDragging = false;
 
       const onMouseDown = (e) => {
-        // Drag using pill
-        const pill = this.shadow.getElementById('capsule-pill');
-        if (!pill || !e.composedPath().includes(pill)) return;
+        const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+        const dragHandle = path.find((node) => node && node.classList && (
+          node.classList.contains('capsule-pill') || node.classList.contains('panel-header')
+        ));
+        if (!dragHandle) return;
+        if (this.isExpanded && !dragHandle.classList.contains('panel-header')) return;
+        if (!this.isExpanded && !dragHandle.classList.contains('capsule-pill')) return;
+        if (e.target && e.target.closest && e.target.closest('.btn-minimize')) return;
 
         isDragging = false;
         startX = e.clientX;
@@ -1099,15 +1178,32 @@
           const dx = moveEvent.clientX - startX;
           const dy = moveEvent.clientY - startY;
           if (Math.abs(dx) > 3 || Math.abs(dy) > 3) isDragging = true;
-          const newLeft = Math.max(10, Math.min(window.innerWidth - 130, initialLeft + dx));
-          const newTop = Math.max(10, Math.min(window.innerHeight - 60, initialTop + dy));
+          const hostRect = this.host.getBoundingClientRect();
+          const documentElement = typeof document !== 'undefined' && document.documentElement
+            ? document.documentElement
+            : null;
+          const viewportWidth = Math.max(1, Number(window.innerWidth) || Number(documentElement && documentElement.clientWidth) || 1);
+          const viewportHeight = Math.max(1, Number(window.innerHeight) || Number(documentElement && documentElement.clientHeight) || 1);
+          const maxLeft = Math.max(10, viewportWidth - hostRect.width - 10);
+          const maxTop = Math.max(10, viewportHeight - hostRect.height - 10);
+          const newLeft = Math.min(maxLeft, Math.max(10, initialLeft + dx));
+          const newTop = Math.min(maxTop, Math.max(10, initialTop + dy));
           this.host.style.left = `${newLeft}px`;
           this.host.style.top = `${newTop}px`;
           this.host.style.right = 'auto';
           this.host.style.transform = 'none';
         };
 
-        const onMouseUp = () => {
+        const onMouseUp = (upEvent) => {
+          if (isDragging) {
+            this.suppressPillClick = true;
+            if (upEvent && typeof upEvent.preventDefault === 'function') upEvent.preventDefault();
+            if (this.dragClickResetTimer !== null) clearTimeout(this.dragClickResetTimer);
+            this.dragClickResetTimer = setTimeout(() => {
+              this.suppressPillClick = false;
+              this.dragClickResetTimer = null;
+            }, 400);
+          }
           window.removeEventListener('mousemove', onMouseMove);
           window.removeEventListener('mouseup', onMouseUp);
         };
@@ -2221,12 +2317,14 @@
       FormulaProtector,
       AcademicFilter,
       PaperBilingualManager,
+      getViewportSafePosition,
       reattachExistingManager,
       getAriaRoleTokens,
       isLinkElement
     };
   } else {
     global.PaperBilingualManager = PaperBilingualManager;
+    global.getViewportSafePosition = getViewportSafePosition;
     global.FormulaProtector = FormulaProtector;
     global.AcademicFilter = AcademicFilter;
 

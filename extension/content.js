@@ -165,6 +165,7 @@
         position: fixed !important;
         width: 370px;
         max-width: calc(100vw - 20px);
+        max-height: calc(100vh - 20px);
         background: #ffffff;
         border-radius: 12px;
         box-shadow: 0 12px 32px -4px rgba(15, 23, 42, 0.18), 0 4px 12px -2px rgba(15, 23, 42, 0.08);
@@ -704,6 +705,8 @@
 
     // Bind trigger icon 2D Drag & Click
     let isDraggingTrigger = false;
+    let suppressTriggerClick = false;
+    let triggerClickResetTimer = null;
     let triggerStartX = 0;
     let triggerStartY = 0;
     let triggerInitLeft = 0;
@@ -711,6 +714,11 @@
 
     triggerIconEl.addEventListener('mousedown', (e) => {
       isDraggingTrigger = false;
+      suppressTriggerClick = false;
+      if (triggerClickResetTimer !== null) {
+        clearTimeout(triggerClickResetTimer);
+        triggerClickResetTimer = null;
+      }
       triggerStartX = e.clientX;
       triggerStartY = e.clientY;
       const rect = triggerIconEl.getBoundingClientRect();
@@ -720,14 +728,25 @@
       const onMove = (moveEv) => {
         const dx = moveEv.clientX - triggerStartX;
         const dy = moveEv.clientY - triggerStartY;
-        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) isDraggingTrigger = true;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+          isDraggingTrigger = true;
+          suppressTriggerClick = true;
+        }
         const newLeft = Math.max(10, Math.min(window.innerWidth - 36, triggerInitLeft + dx));
         const newTop = Math.max(10, Math.min(window.innerHeight - 36, triggerInitTop + dy));
         triggerIconEl.style.left = `${newLeft}px`;
         triggerIconEl.style.top = `${newTop}px`;
       };
 
-      const onUp = () => {
+      const onUp = (upEv) => {
+        if (isDraggingTrigger) {
+          suppressTriggerClick = true;
+          if (upEv && typeof upEv.preventDefault === 'function') upEv.preventDefault();
+          triggerClickResetTimer = setTimeout(() => {
+            suppressTriggerClick = false;
+            triggerClickResetTimer = null;
+          }, 400);
+        }
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
       };
@@ -738,7 +757,15 @@
 
     triggerIconEl.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (isDraggingTrigger) return;
+      if (isDraggingTrigger || suppressTriggerClick) {
+        isDraggingTrigger = false;
+        suppressTriggerClick = false;
+        if (triggerClickResetTimer !== null) {
+          clearTimeout(triggerClickResetTimer);
+          triggerClickResetTimer = null;
+        }
+        return;
+      }
       hideTriggerIcon();
       if (pendingSelectionData) {
         const selectionData = pendingSelectionData;
@@ -772,8 +799,9 @@
     let initialTop = 0;
 
     const onMouseDown = (e) => {
-      const header = shadowRoot ? shadowRoot.querySelector('.card-header') : null;
-      if (!header || !e.composedPath().includes(header)) return;
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+      const header = path.find((node) => node && node.classList && node.classList.contains('card-header'));
+      if (!header) return;
       if (e.target.closest && e.target.closest('.action-btn')) return;
 
       isDraggingCard = true;
@@ -787,10 +815,16 @@
         if (!isDraggingCard) return;
         const dx = moveEv.clientX - startX;
         const dy = moveEv.clientY - startY;
-        const newLeft = Math.max(10, Math.min(window.innerWidth - cardEl.offsetWidth - 10, initialLeft + dx));
-        const newTop = Math.max(10, Math.min(window.innerHeight - cardEl.offsetHeight - 10, initialTop + dy));
-        cardEl.style.left = `${Math.round(newLeft)}px`;
-        cardEl.style.top = `${Math.round(newTop)}px`;
+        const viewport = getViewportSize();
+        const position = clampCardPosition(
+          initialLeft + dx,
+          initialTop + dy,
+          viewport.width,
+          viewport.height,
+          getCardDimensions()
+        );
+        cardEl.style.left = `${Math.round(position.left)}px`;
+        cardEl.style.top = `${Math.round(position.top)}px`;
       };
 
       const onMouseUp = () => {
@@ -803,9 +837,7 @@
       window.addEventListener('mouseup', onMouseUp);
     };
 
-    if (shadowRoot) {
-      shadowRoot.addEventListener('mousedown', onMouseDown);
-    }
+    if (cardEl) cardEl.addEventListener('mousedown', onMouseDown);
   }
 
   // Play pronunciation
@@ -983,13 +1015,52 @@
       rect.left < window.innerWidth && rect.top < window.innerHeight);
   }
 
-  function positionCard(rect) {
+  function getViewportSize() {
+    const documentElement = typeof document !== 'undefined' && document.documentElement
+      ? document.documentElement
+      : null;
+    return {
+      width: Math.max(1, Number(window.innerWidth) || Number(documentElement && documentElement.clientWidth) || 1),
+      height: Math.max(1, Number(window.innerHeight) || Number(documentElement && documentElement.clientHeight) || 1)
+    };
+  }
+
+  function getCardDimensions() {
+    if (!cardEl) return { width: 370, height: 180 };
+    const rect = typeof cardEl.getBoundingClientRect === 'function'
+      ? cardEl.getBoundingClientRect()
+      : null;
+    const offsetWidth = Number(cardEl.offsetWidth) || 0;
+    const offsetHeight = Number(cardEl.offsetHeight) || 0;
+    const rectWidth = Number(rect && rect.width) || 0;
+    const rectHeight = Number(rect && rect.height) || 0;
+    const width = offsetWidth || rectWidth || 370;
+    const height = offsetHeight || rectHeight || 180;
+    return {
+      width: Math.max(1, width),
+      height: Math.max(1, height),
+      measured: offsetWidth > 0 && offsetHeight > 0 || rectWidth > 0 && rectHeight > 0
+    };
+  }
+
+  function clampCardPosition(left, top, viewportWidth, viewportHeight, dimensions, padding = 10) {
+    const maxLeft = Math.max(padding, viewportWidth - dimensions.width - padding);
+    const maxTop = Math.max(padding, viewportHeight - dimensions.height - padding);
+    return {
+      left: Math.min(maxLeft, Math.max(padding, left)),
+      top: Math.min(maxTop, Math.max(padding, top))
+    };
+  }
+
+  function positionCard(rect, retryLayout = true) {
     if (!cardEl || !rect) return;
 
-    const cardWidth = cardEl.offsetWidth || 370;
-    const cardHeight = cardEl.offsetHeight || 180;
-    const winWidth = window.innerWidth;
-    const winHeight = window.innerHeight;
+    const dimensions = getCardDimensions();
+    const cardWidth = dimensions.width;
+    const cardHeight = dimensions.height;
+    const viewport = getViewportSize();
+    const winWidth = viewport.width;
+    const winHeight = viewport.height;
 
     let left = rect.left + (rect.width / 2) - (cardWidth / 2);
     let top = rect.bottom + 8;
@@ -998,18 +1069,22 @@
       if (rect.top - cardHeight - 8 > 10) {
         top = rect.top - cardHeight - 8;
       } else {
-        top = Math.max(10, winHeight - cardHeight - 10);
+        top = winHeight - cardHeight - 10;
       }
     }
 
-    if (left < 10) left = 10;
-    if (left + cardWidth > winWidth - 10) {
-      left = Math.max(10, winWidth - cardWidth - 10);
-    }
-    if (top < 10) top = 10;
+    const position = clampCardPosition(left, top, winWidth, winHeight, dimensions);
 
-    cardEl.style.left = `${Math.round(left)}px`;
-    cardEl.style.top = `${Math.round(top)}px`;
+    cardEl.style.left = `${Math.round(position.left)}px`;
+    cardEl.style.top = `${Math.round(position.top)}px`;
+
+    if (retryLayout && !dimensions.measured && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => {
+        if (!cardEl || !cardEl.classList.contains('visible')) return;
+        const liveRect = getSelectionCardRect(rect, activeSelectionAnchor, { allowOffscreen: true });
+        if (liveRect) positionCard(liveRect, false);
+      });
+    }
   }
 
   function scheduleSelectionCardPosition() {
