@@ -151,6 +151,24 @@ Fixed formula-currency collisions in FormulaProtector, enhanced observer teardow
 
 [OK] **Published**
 
+## 2026-09-24 - Review & Merge PR #4 (Translation Fallback & Floating UI Positioning)
+
+### Summary
+
+- Inspected Pull Request #4 from `Jackeyliu37:fix/translation-maintenance` ("fix: stabilize long-text translation and floating UI positioning").
+- Evaluated changes across 6 files (+328 / -35 lines):
+  1. Translation stability: Bypasses MyMemory for text > 500 characters directly to Google translation; detects MyMemory limit exceeded error messages and prevents treating them as translations; gracefully falls back to Google.
+  2. Floating selection card UX: Suppresses synthetic click events following icon dragging (`suppressTriggerClick`); adds `getCardDimensions`, `clampCardPosition`, and `requestAnimationFrame` next-frame geometry recalculation to handle zero-dimension first layouts; enforces `max-height: calc(100vh - 20px)`.
+  3. Bilingual capsule UX: Implements `keepPanelInViewport` to clamp expanded 290px panel inside the viewport, adds resize listener, isolates drag handle logic between collapsed (pill) and expanded (panel header) states, and cleanly tears down handlers and timers in `destroy()`.
+- Verified test suite: `npm test` (11 suites, 344 assertions passed) and `npm run test:diagnostics` (0 critical defects).
+- Submitted approving review and merged PR #4 into `main`.
+- Bumped version to `2.3.1` across `package.json`, `extension/manifest.json`, and `.github/workflows/release.yml`.
+
+### Status
+
+[OK] **Merged & Released v2.3.1**
+
+
 
 
 

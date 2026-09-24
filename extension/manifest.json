@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PaperDict - 论文划词翻译助手",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "专为英文论文与学术文献设计的划词即翻悬浮查词工具，内置 15,000+ 学术核心词汇、智能连字符断词修复与在线整句翻译。",
   "icons": {
     "16": "icons/icon16.png",
