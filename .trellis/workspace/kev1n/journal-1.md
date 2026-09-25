@@ -217,6 +217,23 @@ Fixed formula-currency collisions in FormulaProtector, enhanced observer teardow
 
 [OK] **Phase 3 Complete & Verified**
 
+## 2026-09-25 - Release v2.4.0 (Default-Off Page Activation & Academic Chart Filtering)
+
+### Summary
+
+- Bumped extension version to `2.4.0` in `package.json` and `extension/manifest.json`.
+- Updated `.github/workflows/release.yml` with comprehensive v2.4.0 release highlights.
+- Highlighted key features:
+  1. Phase 3 Default-off and per-page on-demand activation (`Alt+P`, popup master toggle, memory isolation, badge status).
+  2. Academic figure, table, and caption filtering across web and PDF layers.
+  3. PDF reader stability enhancements (request indexing, concurrent render task cancellation).
+- All 12 test suites (422 assertions) passing cleanly.
+
+### Status
+
+[OK] **Published v2.4.0**
+
+
 
 
 
