@@ -201,6 +201,88 @@ if (typeof AcademicFilter === 'function') {
   assert(!filter.isReferenceHeading('2. Method and Theoretical Formulation'), 'Method heading not matched as reference');
   assert(!filter.isReferenceHeading('References in Neural Networks: A Survey'), 'Paper title with References not matched');
   assert(!filter.isReferenceHeading('References to Prior Work'), 'References to Prior Work heading not matched');
+
+  // Test table & figure tag and role exclusions
+  const tableFigureTags = ['TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD', 'CAPTION', 'FIGURE', 'FIGCAPTION'];
+  for (const tag of tableFigureTags) {
+    assert(filter.excludedTags.has(tag), `Tag ${tag} should be in excludedTags`);
+    assert(filter.isSelfStructurallyExcluded({ tagName: tag }), `Element <${tag}> structurally excluded`);
+  }
+
+  // Test ARIA roles
+  const tableFigureRoles = ['figure', 'table', 'caption'];
+  for (const role of tableFigureRoles) {
+    assert(filter.isSelfStructurallyExcluded({ tagName: 'DIV', getAttribute: (k) => k === 'role' ? role : null }), `Role ${role} structurally excluded`);
+  }
+
+  // Test figure/table container class/id regex (should not match comfortable, portable, etc.)
+  assert(filter.figureTableClassIdRegex.test('table-wrapper'), 'Matches table-wrapper');
+  assert(filter.figureTableClassIdRegex.test('figure-container'), 'Matches figure-container');
+  assert(filter.figureTableClassIdRegex.test('chart_box'), 'Matches chart_box');
+  assert(filter.figureTableClassIdRegex.test('my-diagram'), 'Matches my-diagram');
+  assert(filter.figureTableClassIdRegex.test('plot1'), 'Matches plot1');
+  assert(!filter.figureTableClassIdRegex.test('comfortable'), 'Does not match comfortable');
+  assert(!filter.figureTableClassIdRegex.test('portable-device'), 'Does not match portable-device');
+  assert(!filter.figureTableClassIdRegex.test('configuration'), 'Does not match configuration');
+
+  // Test figure/table captions
+  assert(filter.isFigureOrTableCaption('Figure 1: Overall architecture of the model.'), 'Matches Figure 1:');
+  assert(filter.isFigureOrTableCaption('Fig. 2. Convergence curve over 100 epochs.'), 'Matches Fig. 2.');
+  assert(filter.isFigureOrTableCaption('Table 3. Quantitative results on ImageNet.'), 'Matches Table 3.');
+  assert(filter.isFigureOrTableCaption('Tab. 4: Ablation study of loss functions.'), 'Matches Tab. 4:');
+  assert(filter.isFigureOrTableCaption('Figure S1: Supplementary visual examples.'), 'Matches Figure S1:');
+  assert(filter.isFigureOrTableCaption('Table A1: Hyperparameter configurations.'), 'Matches Table A1:');
+  assert(filter.isFigureOrTableCaption('Figure 1 (a) Architecture pipeline.'), 'Caption with parenthesis delimiter matched');
+  assert(filter.isFigureOrTableCaption('Figure 2 - Training loss and validation perplexity across training epochs.'), 'Caption with dash delimiter matched');
+  assert(!filter.isFigureOrTableCaption('We summarize the results in the following section.'), 'Does not match ordinary prose');
+  assert(!filter.isFigureOrTableCaption('Figure out the underlying cause before optimizing.'), 'Does not match "Figure out"');
+  assert(!filter.isFigureOrTableCaption('Figure 1 shows that our method outperforms previous approaches by a large margin across all standard benchmarks.'), 'Prose starting with Figure 1 shows is not caption');
+  assert(!filter.isFigureOrTableCaption('Fig. 1 illustrates the training pipeline of our proposed architecture.'), 'Prose starting with Fig. 1 illustrates is not caption');
+  assert(!filter.isFigureOrTableCaption('Table 1 compares our method against several strong baselines on ImageNet.'), 'Prose starting with Table 1 compares is not caption');
+  assert(!filter.isFigureOrTableCaption('Table ID is a unique integer identifier in the database schema.'), 'Prose starting with Table ID is not caption');
+
+  // Test tabular data
+  const pipeTable = `| Model | Accuracy | F1 Score |\n| ResNet | 76.5% | 0.74 |\n| Ours | 82.1% | 0.81 |`;
+  assert(filter.isTabularData(pipeTable), 'Detects markdown pipe table');
+
+  const tsvTable = `Method\tParams\tFPS\nBaseline\t25M\t60\nProposed\t18M\t95`;
+  assert(filter.isTabularData(tsvTable), 'Detects TSV table');
+
+  const numericDenseText = `12.5% 88.4 92.1 0.45 ± 0.02 99.1% N/A`;
+  assert(filter.isTabularData(numericDenseText), 'Detects numeric dense token data');
+
+  const normalProse = `In this paper, we propose a novel deep learning framework for zero-shot text translation. Our experiments show significant improvements over previous approaches.`;
+  assert(!filter.isTabularData(normalProse), 'Prose is not tabular data');
+}
+
+// Test Reader.js PDF table and figure filtering
+const readerModule = require('../extension/reader/reader.js');
+if (readerModule) {
+  assert(readerModule.isFigureOrTableCaption('Figure 1: Model architecture overview.'), 'Reader detects Figure caption');
+  assert(readerModule.isFigureOrTableCaption('Table 2: Comparison with state-of-the-art methods.'), 'Reader detects Table caption');
+  assert(!readerModule.isFigureOrTableCaption('The main results are demonstrated in subsequent sections.'), 'Reader does not detect regular text as caption');
+  assert(!readerModule.isFigureOrTableCaption('Figure 1 shows that our model achieves higher accuracy across datasets.'), 'Reader does not detect Figure 1 shows as caption');
+  assert(!readerModule.isFigureOrTableCaption('Table 2 summarizes the quantitative evaluation results on the test set.'), 'Reader does not detect Table 2 summarizes as caption');
+
+  const mockTableItems = [
+    { str: '| Baseline | 75.2 | 0.68 |', transform: [1, 0, 0, 1, 50, 700] },
+    { str: '| Proposed | 81.4 | 0.79 |', transform: [1, 0, 0, 1, 50, 680] }
+  ];
+  const tableParas = readerModule.clusterItemsToParagraphs(mockTableItems);
+  assert(tableParas.length === 0, 'Reader clusters out pipe table from translation paragraphs');
+
+  const mockCaptionItems = [
+    { str: 'Figure 1: Network architecture pipeline diagram.', transform: [1, 0, 0, 1, 50, 700] }
+  ];
+  const captionParas = readerModule.clusterItemsToParagraphs(mockCaptionItems);
+  assert(captionParas.length === 0, 'Reader clusters out Figure caption from translation paragraphs');
+
+  const mockProseItems = [
+    { str: 'This paper presents an extensive empirical evaluation of deep representations across', transform: [1, 0, 0, 1, 50, 700] },
+    { str: 'multiple vision benchmarks and confirms that scaling parameters enhances representation.', transform: [1, 0, 0, 1, 50, 685] }
+  ];
+  const proseParas = readerModule.clusterItemsToParagraphs(mockProseItems);
+  assert(proseParas.length === 1, 'Reader retains valid prose paragraph');
 }
 
 // 6. Test Lifecycle & Cleanup in PaperBilingualManager

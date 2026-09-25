@@ -522,7 +522,8 @@ test('academic filtering rejects interactive and landmark ARIA roles on self or 
     'listbox', 'option', 'slider', 'spinbutton', 'progressbar', 'scrollbar',
     'tree', 'treeitem', 'grid', 'gridcell', 'row', 'rowgroup', 'application',
     'navigation', 'menu', 'menuitem', 'toolbar', 'tab', 'tablist', 'dialog',
-    'search', 'form', 'banner', 'contentinfo', 'complementary'
+    'search', 'form', 'banner', 'contentinfo', 'complementary',
+    'figure', 'table', 'caption'
   ];
 
   for (const role of roles) {
@@ -543,6 +544,70 @@ test('academic filtering rejects interactive and landmark ARIA roles on self or 
     assert.equal(filter.isCandidateTag(nestedCandidate), true, `ancestor role=${role}`);
     assert.equal(filter.isEligible(nestedCandidate), false, `ancestor role=${role}`);
   }
+}));
+
+test('academic filtering rejects table, figure, and chart containers, captions, and tabular data', () => withAcademicDom(() => {
+  const filter = new AcademicFilter();
+
+  // Test tags
+  const table = createAcademicElement('TABLE', '');
+  const tbody = table.appendChild(createAcademicElement('TBODY', ''));
+  const tr = tbody.appendChild(createAcademicElement('TR', ''));
+  const td = tr.appendChild(createAcademicElement('TD', 'Cell data with sufficient length to look like prose content.'));
+  assert.equal(filter.isEligible(td), false, 'TD tag excluded');
+  assert.equal(filter.isEligible(table), false, 'TABLE tag excluded');
+
+  const figure = createAcademicElement('FIGURE', '');
+  const figcaption = figure.appendChild(createAcademicElement('FIGCAPTION', 'Figure 1: Flowchart of the algorithm pipeline.'));
+  assert.equal(filter.isEligible(figcaption), false, 'FIGCAPTION tag excluded');
+  assert.equal(filter.isEligible(figure), false, 'FIGURE tag excluded');
+
+  // Test containers by class / id
+  for (const name of ['figure-box', 'table-wrap', 'chart_container', 'diagram_wrapper', 'main-plot']) {
+    const container = createAcademicElement('DIV', '', { className: name });
+    const childPara = container.appendChild(createAcademicElement(
+      'P',
+      'This paragraph is nested inside a figure or table container and should be excluded.'
+    ));
+    assert.equal(filter.isEligible(childPara), false, `Child of container with class ${name} excluded`);
+  }
+
+  // Ensure safe non-container class names are not falsely excluded
+  for (const safeName of ['comfortable-reading', 'portable-interface', 'configuration-panel-intro']) {
+    const safeDiv = createAcademicElement(
+      'DIV',
+      'This paragraph has a benign class name and should remain eligible for translation.',
+      { className: safeName, role: 'paragraph' }
+    );
+    assert.equal(filter.isEligible(safeDiv), true, `Class ${safeName} should not be falsely excluded`);
+  }
+
+  // Test captions
+  const captionPara = createAcademicElement('P', 'Figure 2: Training loss and validation perplexity across training epochs.');
+  assert.equal(filter.isEligible(captionPara), false, 'Figure caption paragraph excluded');
+
+  const tableCaptionPara = createAcademicElement('P', 'Table 4: Quantitative performance comparison against state-of-the-art baselines.');
+  assert.equal(filter.isEligible(tableCaptionPara), false, 'Table caption paragraph excluded');
+
+  // Ensure ordinary prose beginning with "Figure X..." or "Table X..." is not falsely excluded
+  const figureProsePara = createAcademicElement(
+    'P',
+    'Figure 1 shows that our proposed method achieves state-of-the-art performance on benchmark tasks.'
+  );
+  assert.equal(filter.isEligible(figureProsePara), true, 'Prose starting with "Figure 1 shows" should remain eligible');
+
+  const tableProsePara = createAcademicElement(
+    'P',
+    'Table 3 compares the computational complexity and parameter count across all baseline models.'
+  );
+  assert.equal(filter.isEligible(tableProsePara), true, 'Prose starting with "Table 3 compares" should remain eligible');
+
+  // Test tabular data block
+  const tableDataPara = createAcademicElement(
+    'P',
+    '| Model | Accuracy | Precision | Recall |\n| ResNet-50 | 76.5% | 0.74 | 0.72 |\n| Proposed | 82.1% | 0.81 | 0.80 |'
+  );
+  assert.equal(filter.isEligible(tableDataPara), false, 'Delimited markdown table excluded');
 }));
 
 test('academic filtering explicitly rejects missing WAI-ARIA widget and composite roles', () => withAcademicDom(() => {

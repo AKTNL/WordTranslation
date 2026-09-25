@@ -13,44 +13,50 @@
   }
 
   // DOM Elements
-  const fileInput = document.getElementById('file-input');
-  const docTitle = document.getElementById('doc-title');
-  const welcomeDropzone = document.getElementById('welcome-dropzone');
-  const dropzoneBox = document.getElementById('dropzone-box');
-  const viewerContainer = document.getElementById('viewer-container');
-  const pdfViewer = document.getElementById('pdf-viewer');
+  const fileInput = typeof document !== 'undefined' ? document.getElementById('file-input') : null;
+  const docTitle = typeof document !== 'undefined' ? document.getElementById('doc-title') : null;
+  const welcomeDropzone = typeof document !== 'undefined' ? document.getElementById('welcome-dropzone') : null;
+  const dropzoneBox = typeof document !== 'undefined' ? document.getElementById('dropzone-box') : null;
+  const viewerContainer = typeof document !== 'undefined' ? document.getElementById('viewer-container') : null;
+  const pdfViewer = typeof document !== 'undefined' ? document.getElementById('pdf-viewer') : null;
 
-  const pageControls = document.getElementById('page-controls');
-  const zoomControls = document.getElementById('zoom-controls');
-  const btnPrevPage = document.getElementById('btn-prev-page');
-  const btnNextPage = document.getElementById('btn-next-page');
-  const pageNumInput = document.getElementById('page-num');
-  const pageCountSpan = document.getElementById('page-count');
+  const pageControls = typeof document !== 'undefined' ? document.getElementById('page-controls') : null;
+  const zoomControls = typeof document !== 'undefined' ? document.getElementById('zoom-controls') : null;
+  const btnPrevPage = typeof document !== 'undefined' ? document.getElementById('btn-prev-page') : null;
+  const btnNextPage = typeof document !== 'undefined' ? document.getElementById('btn-next-page') : null;
+  const pageNumInput = typeof document !== 'undefined' ? document.getElementById('page-num') : null;
+  const pageCountSpan = typeof document !== 'undefined' ? document.getElementById('page-count') : null;
 
-  const btnZoomIn = document.getElementById('btn-zoom-in');
-  const btnZoomOut = document.getElementById('btn-zoom-out');
-  const btnFitWidth = document.getElementById('btn-fit-width');
-  const zoomValueSpan = document.getElementById('zoom-value');
+  const btnZoomIn = typeof document !== 'undefined' ? document.getElementById('btn-zoom-in') : null;
+  const btnZoomOut = typeof document !== 'undefined' ? document.getElementById('btn-zoom-out') : null;
+  const btnFitWidth = typeof document !== 'undefined' ? document.getElementById('btn-fit-width') : null;
+  const zoomValueSpan = typeof document !== 'undefined' ? document.getElementById('zoom-value') : null;
 
   // Bilingual Controls
-  const bilingualControls = document.getElementById('bilingual-controls');
-  const btnModeOrig = document.getElementById('btn-reader-mode-orig');
-  const btnModeBi = document.getElementById('btn-reader-mode-bi');
-  const btnModeZh = document.getElementById('btn-reader-mode-zh');
-  const readerBilingualStatus = document.getElementById('reader-bilingual-status');
+  const bilingualControls = typeof document !== 'undefined' ? document.getElementById('bilingual-controls') : null;
+  const btnModeOrig = typeof document !== 'undefined' ? document.getElementById('btn-reader-mode-orig') : null;
+  const btnModeBi = typeof document !== 'undefined' ? document.getElementById('btn-reader-mode-bi') : null;
+  const btnModeZh = typeof document !== 'undefined' ? document.getElementById('btn-reader-mode-zh') : null;
+  const readerBilingualStatus = typeof document !== 'undefined' ? document.getElementById('reader-bilingual-status') : null;
 
   const formulaProtector = typeof FormulaProtector !== 'undefined' ? new FormulaProtector() : null;
-  const dictService = typeof DictService !== 'undefined' ? new DictService() : null;
+  let dictService = typeof DictService !== 'undefined' ? new DictService() : null;
+  if (!dictService && typeof require === 'function') {
+    try {
+      const ds = require('../dict_service.js');
+      if (ds && ds.DictService) dictService = new ds.DictService();
+    } catch (e) {}
+  }
   const annotationManager = typeof AnnotationManager !== 'undefined' ? new AnnotationManager() : null;
   const citationParser = typeof CitationParser !== 'undefined' ? new CitationParser() : null;
 
   // Reader Notes Elements
-  const btnReaderNotes = document.getElementById('btn-reader-notes');
-  const readerNotesCount = document.getElementById('reader-notes-count');
-  const readerNotesDrawer = document.getElementById('reader-notes-drawer');
-  const btnCloseNotesDrawer = document.getElementById('btn-close-notes-drawer');
-  const btnDrawerExportMd = document.getElementById('btn-drawer-export-md');
-  const drawerNotesList = document.getElementById('drawer-notes-list');
+  const btnReaderNotes = typeof document !== 'undefined' ? document.getElementById('btn-reader-notes') : null;
+  const readerNotesCount = typeof document !== 'undefined' ? document.getElementById('reader-notes-count') : null;
+  const readerNotesDrawer = typeof document !== 'undefined' ? document.getElementById('reader-notes-drawer') : null;
+  const btnCloseNotesDrawer = typeof document !== 'undefined' ? document.getElementById('btn-close-notes-drawer') : null;
+  const btnDrawerExportMd = typeof document !== 'undefined' ? document.getElementById('btn-drawer-export-md') : null;
+  const drawerNotesList = typeof document !== 'undefined' ? document.getElementById('drawer-notes-list') : null;
 
   async function updateReaderNotes() {
     if (!annotationManager) return;
@@ -117,11 +123,11 @@
 
   // Reader Glossary Elements
   const glossaryExtractor = typeof GlossaryExtractor !== 'undefined' ? new GlossaryExtractor() : null;
-  const btnReaderGlossary = document.getElementById('btn-reader-glossary');
-  const readerGlossaryCount = document.getElementById('reader-glossary-count');
-  const readerGlossaryDrawer = document.getElementById('reader-glossary-drawer');
-  const btnCloseGlossaryDrawer = document.getElementById('btn-close-glossary-drawer');
-  const drawerGlossaryList = document.getElementById('drawer-glossary-list');
+  const btnReaderGlossary = typeof document !== 'undefined' ? document.getElementById('btn-reader-glossary') : null;
+  const readerGlossaryCount = typeof document !== 'undefined' ? document.getElementById('reader-glossary-count') : null;
+  const readerGlossaryDrawer = typeof document !== 'undefined' ? document.getElementById('reader-glossary-drawer') : null;
+  const btnCloseGlossaryDrawer = typeof document !== 'undefined' ? document.getElementById('btn-close-glossary-drawer') : null;
+  const drawerGlossaryList = typeof document !== 'undefined' ? document.getElementById('drawer-glossary-list') : null;
 
   function updateReaderGlossary() {
     if (!glossaryExtractor) return;
@@ -181,30 +187,32 @@
   }
 
   // Drag and drop handlers
-  window.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    const box = document.getElementById('dropzone-box');
-    if (box) box.classList.add('drag-over');
-  });
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      const box = document.getElementById('dropzone-box');
+      if (box) box.classList.add('drag-over');
+    });
 
-  window.addEventListener('dragleave', (e) => {
-    if (e.target === document.body || e.target === welcomeDropzone) {
+    window.addEventListener('dragleave', (e) => {
+      if (e.target === document.body || e.target === welcomeDropzone) {
+        const box = document.getElementById('dropzone-box');
+        if (box) box.classList.remove('drag-over');
+      }
+    });
+
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
       const box = document.getElementById('dropzone-box');
       if (box) box.classList.remove('drag-over');
-    }
-  });
-
-  window.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const box = document.getElementById('dropzone-box');
-    if (box) box.classList.remove('drag-over');
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const file = e.dataTransfer.files[0];
-      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-        loadPdfFile(file);
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+          loadPdfFile(file);
+        }
       }
-    }
-  });
+    });
+  }
 
   function loadPdfFile(file) {
     docTitle.textContent = file.name;
@@ -572,6 +580,59 @@
     return y1 === null || Math.abs(y1 - y2) > tolerance;
   }
 
+  function isFigureOrTableCaption(text) {
+    if (!text || typeof text !== 'string') return false;
+    return /^\s*(?:figure|fig\.?|table|tab\.)\s*(?:(?:[a-z][\.\-_])?\d+(?:[\.\-_]\d+)*[a-z]?|[a-z]\d+(?:[\.\-_]\d+)*[a-z]?|[ivxlcdm]+|[a-z](?=[0-9:\.\s\-_]))\s*(?:[:.\-–—|~]|[\(\[]|\r?\n|$)/i.test(text.trim());
+  }
+
+  function isTabularData(text) {
+    if (!text || typeof text !== 'string') return false;
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+
+    // 1. Markdown or ASCII table delimiters: e.g. "| col1 | col2 |" or "+----+----+"
+    const lines = trimmed.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const pipeLineCount = lines.filter((l) => (l.match(/\|/g) || []).length >= 2).length;
+    if (pipeLineCount >= 2 || (lines.length === 1 && (trimmed.match(/\|/g) || []).length >= 3)) {
+      return true;
+    }
+    if (/^\+[-+]+\+$/.test(lines[0]) || lines.some((l) => /^[-=_]{4,}$/.test(l) && lines.length > 2)) {
+      return true;
+    }
+
+    // 2. Tab-separated values: multiple lines with tabs
+    const tabLineCount = lines.filter((l) => l.includes('\t')).length;
+    if (tabLineCount >= 2 && tabLineCount >= lines.length * 0.5) {
+      return true;
+    }
+
+    // 3. High density of numeric, percentage, metric, or shorthand cell tokens
+    const tokens = trimmed.split(/\s+/);
+    if (tokens.length >= 6) {
+      const numericOrMetricCount = tokens.filter((tok) => {
+        return /^([±+\-~]?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?%?[a-zA-Z]?|[±+\-]|\/|N\/A|n\/a|--?)$/.test(tok);
+      }).length;
+      if (numericOrMetricCount / tokens.length >= 0.4) {
+        return true;
+      }
+    }
+
+    // 4. Multiple lines where most lines end in or consist mostly of numbers (typical table rows)
+    if (lines.length >= 3) {
+      const numericRowLines = lines.filter((line) => {
+        const lineTokens = line.split(/\s+/).filter(Boolean);
+        if (lineTokens.length < 2) return false;
+        const numCount = lineTokens.filter((t) => /^([±+\-~]?\d+(?:\.\d+)?%?[a-zA-Z]?|N\/A|n\/a|-)$/.test(t)).length;
+        return numCount / lineTokens.length >= 0.5;
+      });
+      if (numericRowLines.length >= 2 && numericRowLines.length >= lines.length * 0.5) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function clusterItemsToParagraphs(items) {
     if (!items || items.length === 0) return [];
 
@@ -624,7 +685,9 @@
             const raw = currentPara.join('\n');
             const cleaned = dictService ? dictService.cleanPaperText(raw, true) : raw;
             if (cleaned.length >= 15 && dictService && dictService.isEnglishSourceText(cleaned)) {
-              paragraphs.push(cleaned);
+              if (!isFigureOrTableCaption(cleaned) && !isTabularData(cleaned)) {
+                paragraphs.push(cleaned);
+              }
             }
           }
           currentPara = [line.text];
@@ -638,7 +701,9 @@
       const raw = currentPara.join('\n');
       const cleaned = dictService ? dictService.cleanPaperText(raw, true) : raw;
       if (cleaned.length >= 15 && dictService && dictService.isEnglishSourceText(cleaned)) {
-        paragraphs.push(cleaned);
+        if (!isFigureOrTableCaption(cleaned) && !isTabularData(cleaned)) {
+          paragraphs.push(cleaned);
+        }
       }
     }
 
@@ -779,20 +844,24 @@
   if (btnModeZh) btnModeZh.addEventListener('click', () => setReaderBilingualMode('chinese'));
 
   // Alt + B Shortcut in Reader
-  window.addEventListener('keydown', (e) => {
-    if (e.altKey && (e.key === 'b' || e.key === 'B' || e.code === 'KeyB')) {
-      e.preventDefault();
-      const modeCycle = {
-        original: 'bilingual',
-        bilingual: 'chinese',
-        chinese: 'original'
-      };
-      setReaderBilingualMode(modeCycle[currentBilingualMode] || 'bilingual');
-    }
-  }, true);
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('keydown', (e) => {
+      if (e.altKey && (e.key === 'b' || e.key === 'B' || e.code === 'KeyB')) {
+        e.preventDefault();
+        const modeCycle = {
+          original: 'bilingual',
+          bilingual: 'chinese',
+          chinese: 'original'
+        };
+        setReaderBilingualMode(modeCycle[currentBilingualMode] || 'bilingual');
+      }
+    }, true);
+  }
 
   function updateZoomDisplay() {
-    zoomValueSpan.textContent = `${Math.round(currentScale * 100)}%`;
+    if (zoomValueSpan) {
+      zoomValueSpan.textContent = `${Math.round(currentScale * 100)}%`;
+    }
   }
 
   // Smooth Zoom with Reading Position Preservation (Never clear DOM)
@@ -811,76 +880,92 @@
   }
 
   // Zoom buttons
-  btnZoomIn.addEventListener('click', () => {
-    if (currentScale >= 3.0) return;
-    currentScale = Math.min(3.0, currentScale + 0.15);
-    applyZoomWithPreservation();
-  });
+  if (btnZoomIn) {
+    btnZoomIn.addEventListener('click', () => {
+      if (currentScale >= 3.0) return;
+      currentScale = Math.min(3.0, currentScale + 0.15);
+      applyZoomWithPreservation();
+    });
+  }
 
-  btnZoomOut.addEventListener('click', () => {
-    if (currentScale <= 0.6) return;
-    currentScale = Math.max(0.6, currentScale - 0.15);
-    applyZoomWithPreservation();
-  });
+  if (btnZoomOut) {
+    btnZoomOut.addEventListener('click', () => {
+      if (currentScale <= 0.6) return;
+      currentScale = Math.max(0.6, currentScale - 0.15);
+      applyZoomWithPreservation();
+    });
+  }
 
-  btnFitWidth.addEventListener('click', async () => {
-    if (!currentPdfDoc) return;
-    const firstPage = await currentPdfDoc.getPage(1);
-    const unscaledViewport = firstPage.getViewport({ scale: 1.0 });
-    const availableWidth = viewerContainer.clientWidth - 48;
-    currentScale = Math.max(0.6, Math.min(2.5, availableWidth / unscaledViewport.width));
-    applyZoomWithPreservation();
-  });
+  if (btnFitWidth) {
+    btnFitWidth.addEventListener('click', async () => {
+      if (!currentPdfDoc || !viewerContainer) return;
+      const firstPage = await currentPdfDoc.getPage(1);
+      const unscaledViewport = firstPage.getViewport({ scale: 1.0 });
+      const availableWidth = viewerContainer.clientWidth - 48;
+      currentScale = Math.max(0.6, Math.min(2.5, availableWidth / unscaledViewport.width));
+      applyZoomWithPreservation();
+    });
+  }
 
   // Page navigation
-  btnPrevPage.addEventListener('click', () => {
-    if (currentPage > 1) {
-      scrollToPage(currentPage - 1);
-    }
-  });
+  if (btnPrevPage) {
+    btnPrevPage.addEventListener('click', () => {
+      if (currentPage > 1) {
+        scrollToPage(currentPage - 1);
+      }
+    });
+  }
 
-  btnNextPage.addEventListener('click', () => {
-    if (currentPage < totalPages) {
-      scrollToPage(currentPage + 1);
-    }
-  });
+  if (btnNextPage) {
+    btnNextPage.addEventListener('click', () => {
+      if (currentPage < totalPages) {
+        scrollToPage(currentPage + 1);
+      }
+    });
+  }
 
-  pageNumInput.addEventListener('change', () => {
-    let p = parseInt(pageNumInput.value, 10);
-    if (isNaN(p)) p = 1;
-    if (p < 1) p = 1;
-    if (p > totalPages) p = totalPages;
-    scrollToPage(p);
-  });
+  if (pageNumInput) {
+    pageNumInput.addEventListener('change', () => {
+      let p = parseInt(pageNumInput.value, 10);
+      if (isNaN(p)) p = 1;
+      if (p < 1) p = 1;
+      if (p > totalPages) p = totalPages;
+      scrollToPage(p);
+    });
+  }
 
   function scrollToPage(p) {
     currentPage = p;
-    pageNumInput.value = p;
-    const el = document.getElementById(`pdf-page-${p}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (pageNumInput) pageNumInput.value = p;
+    if (typeof document !== 'undefined') {
+      const el = document.getElementById(`pdf-page-${p}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     }
   }
 
   // Monitor scroll to update current page
-  viewerContainer.addEventListener('scroll', () => {
-    if (!currentPdfDoc) return;
-    const pages = document.querySelectorAll('.pdf-page');
-    const containerTop = viewerContainer.scrollTop;
+  if (viewerContainer) {
+    viewerContainer.addEventListener('scroll', () => {
+      if (!currentPdfDoc) return;
+      const pages = document.querySelectorAll('.pdf-page');
+      const containerTop = viewerContainer.scrollTop;
 
-    for (const p of pages) {
-      const pageTop = p.offsetTop;
-      const pageHeight = p.offsetHeight;
-      if (pageTop + pageHeight / 3 >= containerTop) {
-        const num = parseInt(p.dataset.pageNumber, 10);
-        if (num !== currentPage) {
-          currentPage = num;
-          pageNumInput.value = num;
+      for (const p of pages) {
+        const pageTop = p.offsetTop;
+        const pageHeight = p.offsetHeight;
+        if (pageTop + pageHeight / 3 >= containerTop) {
+          const num = parseInt(p.dataset.pageNumber, 10);
+          if (num !== currentPage) {
+            currentPage = num;
+            if (pageNumInput) pageNumInput.value = num;
+          }
+          break;
         }
-        break;
       }
-    }
-  });
+    });
+  }
 
   function escapeHtml(str) {
     if (!str) return '';
@@ -892,9 +977,21 @@
   }
 
   // Check URL query param ?file=
-  const urlParams = new URLSearchParams(window.location.search);
-  const fileUrl = urlParams.get('file');
-  if (fileUrl) {
-    loadPdfFromUrl(fileUrl);
+  if (typeof window !== 'undefined' && window.location && window.location.search) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const fileUrl = urlParams.get('file');
+    if (fileUrl) {
+      loadPdfFromUrl(fileUrl);
+    }
+  }
+
+  // Export for testing
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      clusterPdfTextIntoParagraphs,
+      clusterItemsToParagraphs,
+      isFigureOrTableCaption,
+      isTabularData
+    };
   }
 })();

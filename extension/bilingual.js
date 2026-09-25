@@ -15,12 +15,12 @@
 
   // Explicit WAI-ARIA widgets, composites, and non-content landmarks are never paragraph sources.
   const EXCLUDED_ARIA_ROLES = new Set([
-    'alertdialog', 'application', 'banner', 'button', 'checkbox', 'columnheader',
-    'combobox', 'complementary', 'contentinfo', 'dialog', 'form', 'grid', 'gridcell',
+    'alertdialog', 'application', 'banner', 'button', 'caption', 'checkbox', 'columnheader',
+    'combobox', 'complementary', 'contentinfo', 'dialog', 'figure', 'form', 'grid', 'gridcell',
     'link', 'listbox', 'menu', 'menubar', 'menuitem', 'menuitemcheckbox',
     'menuitemradio', 'meter', 'navigation', 'option', 'progressbar', 'radio',
     'radiogroup', 'row', 'rowgroup', 'rowheader', 'scrollbar', 'search', 'searchbox',
-    'separator', 'slider', 'spinbutton', 'switch', 'tab', 'tablist', 'textbox',
+    'separator', 'slider', 'spinbutton', 'switch', 'tab', 'table', 'tablist', 'textbox',
     'toolbar', 'tooltip', 'tree', 'treegrid', 'treeitem'
   ]);
   // Descendant links remain eligible here; isLinkDense distinguishes prose links from navigation.
@@ -32,6 +32,7 @@
     'a', '[role]', '[contenteditable]', 'button', 'input', 'textarea', 'select',
     'form', 'option', 'label', 'audio', 'video', 'iframe', 'svg', 'canvas',
     'pre', 'code', 'math', 'script', 'style', 'noscript',
+    'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'figure', 'figcaption',
     '.pd-bilingual-trans', '.pd-bilingual-loading', '.pd-bilingual-error',
     '.pd-bilingual-fail', '.pd-mode-toast',
     'paper-dict-host', 'paperdict-bilingual-capsule-host'
@@ -39,8 +40,9 @@
   const DESCENDANT_BLOCKER_TAGS = new Set([
     'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'FORM', 'OPTION', 'LABEL',
     'AUDIO', 'VIDEO', 'IFRAME', 'SVG', 'CANVAS', 'PRE', 'CODE', 'MATH',
-    'SCRIPT', 'STYLE', 'NOSCRIPT', 'PAPER-DICT-HOST',
-    'PAPERDICT-BILINGUAL-CAPSULE-HOST'
+    'SCRIPT', 'STYLE', 'NOSCRIPT',
+    'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD', 'CAPTION', 'FIGURE', 'FIGCAPTION',
+    'PAPER-DICT-HOST', 'PAPERDICT-BILINGUAL-CAPSULE-HOST'
   ]);
 
   function getViewportSafePosition(rect, viewportWidth, viewportHeight, padding = 8) {
@@ -243,12 +245,16 @@
         'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT', 'SELECT',
         'BUTTON', 'SVG', 'CANVAS', 'PRE', 'CODE', 'NAV', 'HEADER',
         'FOOTER', 'ASIDE', 'FORM', 'OPTION', 'LABEL', 'AUDIO', 'VIDEO',
-        'IFRAME', 'MATH', 'PAPER-DICT-HOST', 'PAPERDICT-BILINGUAL-CAPSULE-HOST'
+        'IFRAME', 'MATH',
+        'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD', 'CAPTION', 'FIGURE', 'FIGCAPTION',
+        'PAPER-DICT-HOST', 'PAPERDICT-BILINGUAL-CAPSULE-HOST'
       ]);
 
       this.refHeadingRegex = /^\s*(?:(?:\[\d+\]|[0-9]+|[IVXLCDM]+)[\.\s\-]*)?(?:references|bibliography|works\s+cited|literature\s+cited|citations)(?:\s*(?:and|&)\s*(?:notes|sources|citations|references|further\s+reading))?\s*[:\.]?\s*$/i;
       this.excludedClassIdRegex = /(reference|bibliography|biblio|ref-list|footnote|author-notes|header|navbar|sidebar|footer|menu|comment|pager|pagination|disclaimer|copyright|doi-box)/i;
       this.mathClassIdRegex = /(?:^|[\s_-])(?:formula|math|mathjax|katex|mjx-container)(?:$|[\s_-])/i;
+      this.figureTableClassIdRegex = /(?:^|[\s_-])(?:figure|fig|table|tbl|chart|diagram|plot)s?(?:[0-9]+)?(?:$|[\s_-]|[-_]container|[-_]wrap|[-_]wrapper|[-_]box|[-_]content)/i;
+      this.figureTableCaptionRegex = /^\s*(?:figure|fig\.?|table|tab\.)\s*(?:(?:[a-z][\.\-_])?\d+(?:[\.\-_]\d+)*[a-z]?|[a-z]\d+(?:[\.\-_]\d+)*[a-z]?|[ivxlcdm]+|[a-z](?=[0-9:\.\s\-_]))\s*(?:[:.\-–—|~]|[\(\[]|\r?\n|$)/i;
       this.semanticDivHintRegex = /(?:^|[\s_-])(?:paragraph|para|prose|abstract|article[-_]?text|body[-_]?text)(?:$|[\s_-])/i;
       this.blockCandidateTags = new Set([
         'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'LI'
@@ -257,6 +263,54 @@
 
     isReferenceHeading(text) {
       return this.refHeadingRegex.test(String(text || '').trim());
+    }
+
+    isFigureOrTableCaption(text) {
+      return this.figureTableCaptionRegex.test(String(text || '').trim());
+    }
+
+    isTabularData(text) {
+      if (!text || typeof text !== 'string') return false;
+      const trimmed = text.trim();
+      if (!trimmed) return false;
+
+      const lines = trimmed.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      const pipeLineCount = lines.filter((l) => (l.match(/\|/g) || []).length >= 2).length;
+      if (pipeLineCount >= 2 || (lines.length === 1 && (trimmed.match(/\|/g) || []).length >= 3)) {
+        return true;
+      }
+      if (/^\+[-+]+\+$/.test(lines[0]) || lines.some((l) => /^[-=_]{4,}$/.test(l) && lines.length > 2)) {
+        return true;
+      }
+
+      const tabLineCount = lines.filter((l) => l.includes('\t')).length;
+      if (tabLineCount >= 2 && tabLineCount >= lines.length * 0.5) {
+        return true;
+      }
+
+      const tokens = trimmed.split(/\s+/);
+      if (tokens.length >= 6) {
+        const numericOrMetricCount = tokens.filter((tok) => {
+          return /^([±+\-~]?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?%?[a-zA-Z]?|[±+\-]|\/|N\/A|n\/a|--?)$/.test(tok);
+        }).length;
+        if (numericOrMetricCount / tokens.length >= 0.4) {
+          return true;
+        }
+      }
+
+      if (lines.length >= 3) {
+        const numericRowLines = lines.filter((line) => {
+          const lineTokens = line.split(/\s+/).filter(Boolean);
+          if (lineTokens.length < 2) return false;
+          const numCount = lineTokens.filter((t) => /^([±+\-~]?\d+(?:\.\d+)?%?[a-zA-Z]?|N\/A|n\/a|-)$/.test(t)).length;
+          return numCount / lineTokens.length >= 0.5;
+        });
+        if (numericRowLines.length >= 2 && numericRowLines.length >= lines.length * 0.5) {
+          return true;
+        }
+      }
+
+      return false;
     }
 
     hasExcludedRole(el, excludedRoles = EXCLUDED_ARIA_ROLES) {
@@ -332,7 +386,9 @@
         this.excludedClassIdRegex.test(id) ||
         this.excludedClassIdRegex.test(className) ||
         this.mathClassIdRegex.test(id) ||
-        this.mathClassIdRegex.test(className)
+        this.mathClassIdRegex.test(className) ||
+        this.figureTableClassIdRegex.test(id) ||
+        this.figureTableClassIdRegex.test(className)
       ) {
         return true;
       }
@@ -432,6 +488,8 @@
       } else if (rawText.length < 15) {
         return false;
       }
+
+      if (this.isFigureOrTableCaption(rawText) || this.isTabularData(rawText)) return false;
 
       if (!isEnglishSourceText(rawText)) return false;
       if (typeof window !== 'undefined' && el.offsetParent === null && el.offsetHeight === 0 && el.offsetWidth === 0) {
@@ -2320,7 +2378,11 @@
       getViewportSafePosition,
       reattachExistingManager,
       getAriaRoleTokens,
-      isLinkElement
+      isLinkElement,
+      EXCLUDED_ARIA_ROLES,
+      EXCLUDED_DESCENDANT_ARIA_ROLES,
+      DESCENDANT_BLOCKER_TAGS,
+      DESCENDANT_SCAN_SELECTOR
     };
   } else {
     global.PaperBilingualManager = PaperBilingualManager;

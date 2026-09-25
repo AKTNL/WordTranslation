@@ -47,8 +47,13 @@ Questions to answer:
 
 1. **宿主隔离优先 (Shadow DOM Encapsulation)**：
    - 所有注入到第三方学术页面（arXiv, Nature, IEEE 等）的独立浮动 UI（悬浮查词卡片、悬浮控制胶囊），必须通过 `attachShadow({ mode: 'open' })` 挂载，防止被宿主页面的 CSS reset（如 `div { all: unset }`）破坏。
-2. **论文正文智能降噪**：
-   - 双语/纯中文阅读器提取正文段落时，必须主动过滤参考文献区（`#references`, `.references`, `.bibliography` 等）、代码块（`pre`, `code`）及数学公式块。
+2. **论文正文智能降噪与图表过滤**：
+   - 双语/纯中文阅读器提取正文段落时，必须主动过滤参考文献区（`#references`, `.references`, `.bibliography` 等）、代码块（`pre`, `code`）、数学公式块以及论文图表元素。
+   - 图表过滤规范：
+     - 结构标签：必须排除 `TABLE`, `THEAD`, `TBODY`, `TFOOT`, `TR`, `TH`, `TD`, `CAPTION`, `FIGURE`, `FIGCAPTION`。
+     - ARIA 角色：必须排除 `figure`, `table`, `caption` 以及 `grid`, `gridcell`, `row` 等相关角色。
+     - 容器模式：精准匹配 `figure`, `table`, `chart`, `diagram`, `plot` 相关类名与 ID，严禁误伤 `comfortable`, `portable` 等词汇。
+     - 题注与表格数据：必须识别并排除独立图表题注（如 `Figure 1:`, `Table 1:`，必须严格要求标点分隔符，严禁误伤 `Figure 1 shows ...` 等正常解释性学术正文）以及纯表格/指标数据行。
 3. **视口懒加载与并发节流**：
    - 必须采用 `IntersectionObserver` 进行流式按需加载，限制单次并发请求量（如最大并发 2~3），并内置内存字典/短语缓存，避免触发翻译引擎 Rate Limit。
 4. **统一英语源文本判定**：
