@@ -1357,12 +1357,12 @@
     }
 
     onPageDeactivated() {
-      this.restoreOriginalView();
-      this.applyCapsuleEnabled(false);
       this.mode = 'original';
       if (typeof document !== 'undefined' && document.documentElement) {
         document.documentElement.dataset.paperdictMode = 'original';
       }
+      this.restoreOriginalView();
+      this.applyCapsuleEnabled(false);
     }
 
     setupRuntimeListener() {
@@ -1947,7 +1947,12 @@
     /**
      * Toggles modes cyclically: original -> bilingual -> chinese -> original
      */
-    toggleMode() {
+    toggleMode(options = {}) {
+      const now = Date.now();
+      if (!options.force && this.lastToggleModeTime && now - this.lastToggleModeTime < 250) {
+        return this.mode;
+      }
+      this.lastToggleModeTime = now;
       const modeCycle = {
         original: 'bilingual',
         bilingual: 'chinese',
@@ -1955,6 +1960,7 @@
       };
       const nextMode = modeCycle[this.mode] || 'bilingual';
       this.setMode(nextMode);
+      return this.mode;
     }
 
     /**
@@ -2016,6 +2022,7 @@
      * Discovers academic content elements and hooks observer
      */
     activateBilingualView() {
+      if (typeof document === 'undefined') return;
       if (!this.pageModeActive) {
         this.pageModeActive = true;
         this.viewGeneration++;

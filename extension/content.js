@@ -87,6 +87,7 @@
     pageActive = nextActive;
     if (typeof window !== 'undefined') {
       window.__paperDictPageActive = pageActive;
+      window.__PAPER_DICT_PAGE_ACTIVE__ = pageActive;
     }
 
     if (!pageActive) {

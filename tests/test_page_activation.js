@@ -244,15 +244,29 @@ function runTests() {
   assert.equal(capsuleDestroyed, true, 'Capsule is destroyed when page is inactive');
   assert.equal(webManager.capsule, null);
 
-  // When onPageDeactivated() is called
+  // When onPageDeactivated() is called from chinese mode
+  webManager.mode = 'chinese';
   let viewRestored = false;
-  webManager.restoreOriginalView = () => { viewRestored = true; };
+  let modeDuringRestore = null;
+  webManager.restoreOriginalView = () => {
+    viewRestored = true;
+    modeDuringRestore = webManager.mode;
+  };
   webManager.onPageDeactivated();
   assert.equal(viewRestored, true, 'onPageDeactivated restores original view');
+  assert.equal(modeDuringRestore, 'original', 'mode is already reset to original when restore runs');
   assert.equal(webManager.mode, 'original', 'onPageDeactivated resets mode to original');
 
+  // Test Alt+B toggleMode debounce
+  const initialMode = webManager.mode; // 'original'
+  webManager.onlineFallback = true;
+  webManager.toggleMode(); // toggles original -> bilingual
+  assert.equal(webManager.mode, 'bilingual', 'First toggle switches to bilingual');
+  webManager.toggleMode(); // immediate second toggle should be debounced
+  assert.equal(webManager.mode, 'bilingual', 'Immediate second toggleMode is debounced within 250ms');
+
   delete global.window;
-  console.log('  ✓ PASS: Bilingual manager synchronizes lifecycle with page active status');
+  console.log('  ✓ PASS: Bilingual manager synchronizes lifecycle with page active status and debounces Alt+B');
 
   // Test 6: Popup Master Switch UI & Tab Bridge
   console.log('\n[Test 6: Popup UI Master Switch & Accessibility]');
@@ -310,6 +324,26 @@ function runTests() {
   assert.equal(isolatedTab2.window.__paperDictIsPageActive(), true, 'Rapid duplicate Alt+P ignored by debounce');
 
   console.log('  ✓ PASS: Per-tab isolation verified and rapid duplicate Alt+P keydowns are debounced');
+
+  // Test 8: Tab Bridge Classification for Restricted and Special Pages
+  console.log('\n[Test 8: Tab Bridge Restricted Page Handling]');
+  const tabBridge = require('../extension/popup/tab_bridge.js');
+  const chromePage = tabBridge.classifyTabUrl('chrome://extensions');
+  assert.equal(chromePage.injectable, false, 'chrome:// URL is not injectable');
+  assert.equal(chromePage.code, 'RESTRICTED_PAGE', 'chrome:// classified as RESTRICTED_PAGE');
+
+  const edgePage = tabBridge.classifyTabUrl('edge://settings');
+  assert.equal(edgePage.injectable, false, 'edge:// URL is not injectable');
+
+  const readerUrl = tabBridge.classifyTabUrl('chrome-extension://testid/reader/reader.html');
+  assert.equal(readerUrl.code, 'READER_PAGE', 'reader URL classified as READER_PAGE');
+
+  const pdfUrl = tabBridge.classifyTabUrl('https://arxiv.org/pdf/2103.00020.pdf');
+  assert.equal(pdfUrl.code, 'PDF_PAGE', 'Direct PDF URL classified as PDF_PAGE');
+
+  const webUrl = tabBridge.classifyTabUrl('https://arxiv.org/abs/2103.00020');
+  assert.equal(webUrl.injectable, true, 'Standard https URL is injectable');
+  console.log('  ✓ PASS: Tab Bridge properly identifies and isolates restricted/special pages');
 
   console.log('\n==============================');
   console.log('All Phase 3 Page Activation tests passed successfully!');

@@ -286,6 +286,15 @@ document.addEventListener('DOMContentLoaded', () => {
   (async () => {
     try {
       const tab = await getActiveTab();
+      let tabHost = '';
+      try {
+        if (tab && tab.url) {
+          const u = new URL(tab.url);
+          tabHost = u.hostname || (u.protocol === 'file:' ? '本地文件' : '');
+        }
+      } catch (e) {}
+      if (tabHost && !currentActiveTabHost) currentActiveTabHost = tabHost;
+
       const classification = window.PaperDictTabBridge
         ? window.PaperDictTabBridge.classifyTabUrl(tab.url)
         : { injectable: true };
@@ -302,7 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const response = await sendBilingualMessage(tab, { type: 'GET_PAGE_STATUS' });
       if (response) {
         const isPageActive = response.active === true;
-        updatePageActiveUI(isPageActive);
+        updatePageActiveUI(isPageActive, currentActiveTabHost);
         if (response.mode) {
           updatePopupBilingualUI(response.mode, response.total, response.translated);
         }
