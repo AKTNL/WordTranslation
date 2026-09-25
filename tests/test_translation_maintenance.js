@@ -10,6 +10,10 @@ const {
   getViewportSafePosition
 } = require('../extension/bilingual.js');
 const { GlossaryService } = require('../extension/glossary_service.js');
+const {
+  translatePageParagraphs,
+  pageParagraphsMap
+} = require('../extension/reader/reader.js');
 
 const dictData = JSON.parse(
   fs.readFileSync(path.join(__dirname, '../extension/dict/academic_dict.json'), 'utf8')
@@ -18,9 +22,9 @@ const dictData = JSON.parse(
 let passed = 0;
 let failed = 0;
 
-function test(name, fn) {
+async function test(name, fn) {
   try {
-    fn();
+    await fn();
     passed++;
     console.log(`  PASS ${name}`);
   } catch (error) {
@@ -30,32 +34,33 @@ function test(name, fn) {
   }
 }
 
-console.log('=== PaperDict Translation Maintenance Tests ===');
+async function run() {
+  console.log('=== PaperDict Translation Maintenance Tests ===');
 
-const service = new DictService(dictData);
-const contentJs = fs.readFileSync(path.join(__dirname, '../extension/content.js'), 'utf8');
-const readerJs = fs.readFileSync(path.join(__dirname, '../extension/reader/reader.js'), 'utf8');
-const popupHtml = fs.readFileSync(path.join(__dirname, '../extension/popup/popup.html'), 'utf8');
-const popupJs = fs.readFileSync(path.join(__dirname, '../extension/popup/popup.js'), 'utf8');
-const bilingualJs = fs.readFileSync(path.join(__dirname, '../extension/bilingual.js'), 'utf8');
-const backgroundJs = fs.readFileSync(path.join(__dirname, '../extension/background.js'), 'utf8');
+  const service = new DictService(dictData);
+  const contentJs = fs.readFileSync(path.join(__dirname, '../extension/content.js'), 'utf8');
+  const readerJs = fs.readFileSync(path.join(__dirname, '../extension/reader/reader.js'), 'utf8');
+  const popupHtml = fs.readFileSync(path.join(__dirname, '../extension/popup/popup.html'), 'utf8');
+  const popupJs = fs.readFileSync(path.join(__dirname, '../extension/popup/popup.js'), 'utf8');
+  const bilingualJs = fs.readFileSync(path.join(__dirname, '../extension/bilingual.js'), 'utf8');
+  const backgroundJs = fs.readFileSync(path.join(__dirname, '../extension/background.js'), 'utf8');
 
-test('rejects pure Chinese as an English source', () => {
+  await test('rejects pure Chinese as an English source', () => {
   assert.equal(service.isEnglishSourceText('深度学习'), false);
   assert.equal(service.isLookupEligible('深度学习'), false);
 });
 
-test('rejects mixed Chinese and English selections', () => {
+  await test('rejects mixed Chinese and English selections', () => {
   assert.equal(service.isEnglishSourceText('CNN 模型'), false);
   assert.equal(service.isLookupEligible('A中'), false);
 });
 
-test('accepts normal English academic text', () => {
+  await test('accepts normal English academic text', () => {
   assert.equal(service.isEnglishSourceText('retrieval augmented generation'), true);
   assert.equal(service.isLookupEligible('retrieval augmented generation'), true);
 });
 
-test('full-page filter rejects Chinese and mixed-language paragraphs', () => {
+  await test('full-page filter rejects Chinese and mixed-language paragraphs', () => {
   global.document = { body: {}, documentElement: {} };
   const filter = new AcademicFilter();
   const makeElement = (text) => ({
@@ -75,12 +80,12 @@ test('full-page filter rejects Chinese and mixed-language paragraphs', () => {
   delete global.document;
 });
 
-test('PDF reader uses the shared English-only predicate and reports engine errors', () => {
+  await test('PDF reader uses the shared English-only predicate and reports engine errors', () => {
   assert.equal((readerJs.match(/dictService\.isEnglishSourceText\(cleaned\)/g) || []).length, 2);
   assert.match(readerJs, /res\?\.error \|\| '翻译失败，请稍后重试'/);
 });
 
-test('parses quoted CSV and JSON glossary files', () => {
+  await test('parses quoted CSV and JSON glossary files', () => {
   assert.deepEqual(
     GlossaryService.parseCsv('source,target\n"ablation study","消融实验"'),
     [{ source: 'ablation study', target: '消融实验' }]
@@ -91,7 +96,7 @@ test('parses quoted CSV and JSON glossary files', () => {
   );
 });
 
-test('prefers user terms and longest phrase matches', () => {
+  await test('prefers user terms and longest phrase matches', () => {
   const glossary = new GlossaryService([
     { source: 'language model', target: '语言模型', priority: 10 },
     { source: 'large language model', target: '大语言模型', priority: 10 },
@@ -108,7 +113,7 @@ test('prefers user terms and longest phrase matches', () => {
   );
 });
 
-test('restores double-digit term tokens without corrupting their indexes', () => {
+  await test('restores double-digit term tokens without corrupting their indexes', () => {
   const entries = Array.from({ length: 11 }, (_, index) => ({
     source: `term ${index}`,
     target: `译法 ${String.fromCharCode(65 + index)}`
@@ -121,7 +126,7 @@ test('restores double-digit term tokens without corrupting their indexes', () =>
   assert.equal(restored, entries.map((entry) => entry.target).join(', '));
 });
 
-test('merges imported terms and reports changes', () => {
+  await test('merges imported terms and reports changes', () => {
   const result = GlossaryService.mergeEntries(
     [{ source: 'embedding', target: '嵌入' }],
     [
@@ -135,7 +140,7 @@ test('merges imported terms and reports changes', () => {
   assert.equal(result.entries.find((entry) => entry.source === 'embedding').target, '嵌入表示');
 });
 
-test('selection lookup checks the glossary before online translation', () => {
+  await test('selection lookup checks the glossary before online translation', () => {
   assert.match(contentJs, /LOOKUP_GLOSSARY/);
   assert.match(contentJs, /本地词典与术语库未收录/);
   assert.match(
@@ -144,7 +149,7 @@ test('selection lookup checks the glossary before online translation', () => {
   );
 });
 
-test('full-page manager exposes and applies the online translation setting', () => {
+  await test('full-page manager exposes and applies the online translation setting', () => {
   const manager = new PaperBilingualManager();
   manager.applyOnlineFallback(false);
   assert.equal(manager.onlineFallback, false);
@@ -152,7 +157,7 @@ test('full-page manager exposes and applies the online translation setting', () 
   assert.equal(manager.onlineFallback, true);
 });
 
-test('full-page manager clears its local cache when engine or glossary settings change', () => {
+  await test('full-page manager clears its local cache when engine or glossary settings change', () => {
   let storageListener = null;
   global.chrome = {
     storage: {
@@ -174,7 +179,7 @@ test('full-page manager clears its local cache when engine or glossary settings 
   delete global.chrome;
 });
 
-test('capsule setting destroys and recreates the live capsule', () => {
+  await test('capsule setting destroys and recreates the live capsule', () => {
   const manager = new PaperBilingualManager();
   let removed = false;
   manager.capsule = {
@@ -191,7 +196,7 @@ test('capsule setting destroys and recreates the live capsule', () => {
   assert.notEqual(manager.capsule, null);
 });
 
-test('expanded capsule stays inside the viewport at the right edge', () => {
+  await test('expanded capsule stays inside the viewport at the right edge', () => {
   const position = getViewportSafePosition(
     { left: 1160, top: 420, width: 290, height: 300 },
     1280,
@@ -204,7 +209,7 @@ test('expanded capsule stays inside the viewport at the right edge', () => {
   assert.ok(position.top + 300 <= 800 - 8);
 });
 
-test('expanded capsule stays positioned and remains draggable from its header', () => {
+  await test('expanded capsule stays positioned and remains draggable from its header', () => {
   assert.match(bilingualJs, /requestAnimationFrame\(\(\) => this\.keepPanelInViewport\(panel(?:, false)?\)\)/);
   assert.match(bilingualJs, /panel-header/);
   assert.match(bilingualJs, /this\.suppressPillClick/);
@@ -214,7 +219,7 @@ test('expanded capsule stays positioned and remains draggable from its header', 
   assert.match(bilingualJs, /panelAnchorTop/);
 });
 
-test('popup exposes real API testing and glossary management controls', () => {
+  await test('popup exposes real API testing and glossary management controls', () => {
   assert.match(popupHtml, /id="btn-test-api"/);
   assert.match(popupHtml, /id="input-glossary-file"/);
   assert.match(popupHtml, /id="glossary-pack-list"/);
@@ -223,18 +228,18 @@ test('popup exposes real API testing and glossary management controls', () => {
   assert.match(popupJs, /GlossaryService\.parse/);
 });
 
-test('popup recovers a missing content script and surfaces page connection errors', () => {
+  await test('popup recovers a missing content script and surfaces page connection errors', () => {
   assert.match(popupHtml, /src="tab_bridge\.js"/);
   assert.match(popupJs, /PaperDictTabBridge\.sendMessageWithRecovery/);
   assert.match(popupJs, /setBilingualStatus\(error\.message/);
 });
 
-test('content-script recovery is idempotent and uses the complete dependency list', () => {
+  await test('content-script recovery is idempotent and uses the complete dependency list', () => {
   assert.match(bilingualJs, /reattachExistingManager\(global\.paperBilingualManager\)/);
   assert.doesNotMatch(backgroundJs, /chrome\.scripting\.executeScript/);
 });
 
-test('bilingual runtime listener can be safely reattached', () => {
+  await test('bilingual runtime listener can be safely reattached', () => {
   const listeners = new Set();
   global.chrome = {
     runtime: {
@@ -255,7 +260,7 @@ test('bilingual runtime listener can be safely reattached', () => {
   delete global.chrome;
 });
 
-test('upgrades a legacy bilingual manager that lacks the new listener method', () => {
+  await test('upgrades a legacy bilingual manager that lacks the new listener method', () => {
   const listeners = new Set();
   global.chrome = {
     runtime: {
@@ -281,5 +286,44 @@ test('upgrades a legacy bilingual manager that lacks the new listener method', (
   delete global.chrome;
 });
 
-console.log(`\nResults: ${passed} passed, ${failed} failed`);
-if (failed > 0) process.exit(1);
+  await test('PDF reader translatePageParagraphs generates valid requestId without ReferenceError', async () => {
+    const sentMessages = [];
+    global.chrome = {
+      runtime: {
+        sendMessage: async (message) => {
+          sentMessages.push(message);
+          return { success: true, translation: `译文: ${message.text}` };
+        }
+      }
+    };
+
+    const div1 = { innerHTML: '', querySelector: () => null };
+    const div2 = { innerHTML: '', querySelector: () => null };
+    const item1 = { orig: 'First academic sentence.', trans: '', status: 'idle', pDiv: {}, transDiv: div1 };
+    const item2 = { orig: 'Second academic sentence.', trans: '', status: 'idle', pDiv: {}, transDiv: div2 };
+
+    pageParagraphsMap.set(999, [item1, item2]);
+
+    try {
+      await translatePageParagraphs(999);
+      assert.equal(sentMessages.length, 2);
+      assert.equal(sentMessages[0].type, 'TRANSLATE_ONLINE');
+      assert.match(sentMessages[0].requestId, /^reader_p999_0_\d+$/);
+      assert.match(sentMessages[1].requestId, /^reader_p999_1_\d+$/);
+      assert.equal(item1.status, 'done');
+      assert.equal(item2.status, 'done');
+      assert.equal(item1.trans, '译文: First academic sentence.');
+      assert.equal(item2.trans, '译文: Second academic sentence.');
+      assert.equal(div1.innerHTML, '译文: First academic sentence.');
+      assert.equal(div2.innerHTML, '译文: Second academic sentence.');
+    } finally {
+      pageParagraphsMap.delete(999);
+      delete global.chrome;
+    }
+  });
+
+  console.log(`\nResults: ${passed} passed, ${failed} failed`);
+  if (failed > 0) process.exit(1);
+}
+
+run();

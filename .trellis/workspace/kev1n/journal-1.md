@@ -168,6 +168,20 @@ Fixed formula-currency collisions in FormulaProtector, enhanced observer teardow
 
 [OK] **Merged & Released v2.3.1**
 
+## 2026-09-25 - Fix PDF Reader Paragraph Translation Index ReferenceError
+
+### Summary
+
+- Fixed `ReferenceError: i is not defined` in `extension/reader/reader.js` inside `translatePageParagraphs(pageNumber)` when constructing indexed request ID `reader_p${pageNumber}_${i}_${Date.now()}`.
+- Converted `for (const item of items)` loop to `for (let i = 0; i < items.length; i++)`.
+- Added regression test in `tests/test_translation_maintenance.js` verifying that `translatePageParagraphs` successfully dispatches indexed requests and handles responses.
+- Verified test suite: all 11 suites (393 assertions) passed cleanly.
+
+### Status
+
+[OK] **Verified & Ready to Push**
+
+
 
 
 

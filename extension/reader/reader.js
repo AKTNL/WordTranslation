@@ -719,7 +719,8 @@
       readerBilingualStatus.style.color = '#60a5fa';
     }
 
-    for (const item of items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       if (item.status === 'done') continue;
       item.status = 'translating';
       item.transDiv.innerHTML = '<div class="pdf-p-loading">正在速译学术段落...</div>';
@@ -991,7 +992,9 @@
       clusterPdfTextIntoParagraphs,
       clusterItemsToParagraphs,
       isFigureOrTableCaption,
-      isTabularData
+      isTabularData,
+      translatePageParagraphs,
+      pageParagraphsMap
     };
   }
 })();
