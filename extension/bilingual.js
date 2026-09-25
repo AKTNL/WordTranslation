@@ -1329,6 +1329,42 @@
       this.setupRuntimeListener();
     }
 
+    isPageActive() {
+      if (typeof window === 'undefined') return true;
+      if (typeof window.__paperDictIsPageActive === 'function') {
+        return Boolean(window.__paperDictIsPageActive());
+      }
+      if (window.__paperDictPageActive !== undefined) {
+        return Boolean(window.__paperDictPageActive);
+      }
+      if (window.__PAPER_DICT_PAGE_ACTIVE__ !== undefined) {
+        return Boolean(window.__PAPER_DICT_PAGE_ACTIVE__);
+      }
+      if (window.location) {
+        const path = window.location.pathname || '';
+        const href = window.location.href || '';
+        if (path.includes('reader.html') || href.includes('reader.html')) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    onPageActivated() {
+      if (this.capsuleEnabled && !this.isBlacklisted) {
+        this.applyCapsuleEnabled(true);
+      }
+    }
+
+    onPageDeactivated() {
+      this.restoreOriginalView();
+      this.applyCapsuleEnabled(false);
+      this.mode = 'original';
+      if (typeof document !== 'undefined' && document.documentElement) {
+        document.documentElement.dataset.paperdictMode = 'original';
+      }
+    }
+
     setupRuntimeListener() {
       if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.onMessage) return;
       const onMessage = chrome.runtime.onMessage;
@@ -1409,17 +1445,23 @@
               return;
             }
 
-            this.applyCapsuleEnabled(items.capsuleEnabled !== false);
+            if (this.isPageActive()) {
+              this.applyCapsuleEnabled(items.capsuleEnabled !== false);
 
-            if (items.bilingualDefault && items.bilingualMode === 'original') {
-              this.setMode('bilingual');
-            } else if (items.bilingualMode && items.bilingualMode !== 'original') {
-              this.setMode(items.bilingualMode);
+              if (items.bilingualDefault && items.bilingualMode === 'original') {
+                this.setMode('bilingual');
+              } else if (items.bilingualMode && items.bilingualMode !== 'original') {
+                this.setMode(items.bilingualMode);
+              }
+            } else {
+              this.applyCapsuleEnabled(false);
             }
           }
         });
       } else {
-        this.initCapsule();
+        if (this.isPageActive()) {
+          this.initCapsule();
+        }
       }
     }
 
@@ -1487,12 +1529,12 @@
 
     applyCapsuleEnabled(enabled) {
       this.capsuleEnabled = enabled !== false;
-      if (!this.capsuleEnabled || this.isBlacklisted) {
+      if (!this.capsuleEnabled || this.isBlacklisted || !this.isPageActive()) {
         const capsule = this.capsule;
         this.capsule = null;
         if (capsule) {
           if (typeof capsule.destroy === 'function') capsule.destroy();
-          else if (capsule.host) capsule.host.remove();
+          else if (capsule.host && typeof capsule.host.remove === 'function') capsule.host.remove();
         }
         return;
       }
@@ -1502,7 +1544,7 @@
     setupShortcut() {
       window.addEventListener('keydown', (e) => {
         // Alt + B (Option + B on Mac)
-        if (e.altKey && (e.key === 'b' || e.key === 'B' || e.code === 'KeyB')) {
+        if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'b' || e.key === 'B' || e.code === 'KeyB')) {
           e.preventDefault();
           this.toggleMode();
         }
@@ -1923,6 +1965,11 @@
       if (newMode !== 'original' && !this.onlineFallback) {
         this.showToast('整页翻译需要在线引擎，请先在设置中开启在线翻译');
         return;
+      }
+      if (newMode !== 'original' && !this.isPageActive()) {
+        if (typeof window !== 'undefined' && typeof window.__paperDictSetPageActive === 'function') {
+          window.__paperDictSetPageActive(true, { silent: true });
+        }
       }
       if (newMode === this.mode && newMode !== 'original' && this.pageModeActive) {
         if (typeof document !== 'undefined' && document.documentElement) {

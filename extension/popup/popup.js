@@ -36,6 +36,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Settings Elements
+  const togglePageActive = document.getElementById('toggle-page-active');
+  const pageActiveCard = document.getElementById('page-active-card');
+  const pageActiveDot = document.getElementById('page-active-dot');
+  const pageActiveDesc = document.getElementById('page-active-desc');
   const toggleEnabled = document.getElementById('toggle-enabled');
   const toggleDehyphen = document.getElementById('toggle-dehyphen');
   const toggleAutoAudio = document.getElementById('toggle-autoaudio');
@@ -246,18 +250,90 @@ document.addEventListener('DOMContentLoaded', () => {
     return window.PaperDictTabBridge.sendMessageWithRecovery(chrome, tab, message);
   }
 
+  function updatePageActiveUI(active, siteName = currentActiveTabHost, isSpecial = false, specialMessage = '') {
+    if (!togglePageActive) return;
+    if (isSpecial) {
+      togglePageActive.checked = Boolean(active);
+      togglePageActive.disabled = true;
+      if (pageActiveCard) {
+        pageActiveCard.classList.remove('active');
+        pageActiveCard.classList.add('disabled');
+      }
+      if (pageActiveDot) pageActiveDot.classList.toggle('active', Boolean(active));
+      if (pageActiveDesc) pageActiveDesc.textContent = specialMessage || '当前页面不支持划词翻译';
+      return;
+    }
+
+    togglePageActive.disabled = false;
+    togglePageActive.checked = Boolean(active);
+    if (pageActiveCard) {
+      pageActiveCard.classList.toggle('active', Boolean(active));
+      pageActiveCard.classList.remove('disabled');
+    }
+    if (pageActiveDot) pageActiveDot.classList.toggle('active', Boolean(active));
+
+    if (pageActiveDesc) {
+      const displaySite = siteName || currentActiveTabHost || '当前网页';
+      if (active) {
+        pageActiveDesc.textContent = `${displaySite} - 已开启 (选词即可查词)`;
+      } else {
+        pageActiveDesc.textContent = `${displaySite} - 未开启 (点击开启或按 Alt+P)`;
+      }
+    }
+  }
+
   // Check the active tab and reconnect content scripts after an extension reload.
   (async () => {
     try {
       const tab = await getActiveTab();
-      const response = await sendBilingualMessage(tab, { type: 'GET_BILINGUAL_MODE' });
-      if (response && response.mode) {
-        updatePopupBilingualUI(response.mode, response.total, response.translated);
+      const classification = window.PaperDictTabBridge
+        ? window.PaperDictTabBridge.classifyTabUrl(tab.url)
+        : { injectable: true };
+
+      if (classification && classification.code === 'READER_PAGE') {
+        updatePageActiveUI(true, 'PaperDict 阅读器', true, 'PaperDict 专属阅读器已就绪 (划词已激活)');
+      } else if (classification && !classification.injectable) {
+        updatePageActiveUI(false, currentActiveTabHost, true, classification.message || '当前页面不支持扩展运行');
+        setBilingualStatus(classification.message || '当前页面不支持整页翻译', 'error');
+        return;
+      }
+
+      // Tab is injectable: query page active status and bilingual mode in one round-trip
+      const response = await sendBilingualMessage(tab, { type: 'GET_PAGE_STATUS' });
+      if (response) {
+        const isPageActive = response.active === true;
+        updatePageActiveUI(isPageActive);
+        if (response.mode) {
+          updatePopupBilingualUI(response.mode, response.total, response.translated);
+        }
       }
     } catch (error) {
+      updatePageActiveUI(false, currentActiveTabHost, false, '当前页面未开启 (点击开启或按 Alt+P)');
       setBilingualStatus(error.message || '扩展未能连接当前页面', 'error');
     }
   })();
+
+  if (togglePageActive) {
+    togglePageActive.addEventListener('change', async () => {
+      const targetActive = togglePageActive.checked;
+      try {
+        const tab = await getActiveTab();
+        const response = await sendBilingualMessage(tab, {
+          type: 'SET_PAGE_ACTIVE',
+          active: targetActive
+        });
+        const finalActive = response && response.active !== undefined ? response.active : targetActive;
+        updatePageActiveUI(finalActive);
+        if (!finalActive) {
+          updatePopupBilingualUI('original');
+        }
+      } catch (err) {
+        togglePageActive.checked = !targetActive;
+        updatePageActiveUI(!targetActive);
+        setBilingualStatus(err.message || '操作失败，请刷新页面后重试', 'error');
+      }
+    });
+  }
 
   function updatePopupBilingualUI(mode, total, translated) {
     if (btnPopupOrig) btnPopupOrig.classList.toggle('active', mode === 'original');
@@ -282,6 +358,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const response = await sendBilingualMessage(tab, { type: 'SET_BILINGUAL_MODE', mode });
       if (!response || !response.mode) throw new Error('当前页面未确认模式切换');
       updatePopupBilingualUI(response.mode, response.total, response.translated);
+      if (mode !== 'original') {
+        updatePageActiveUI(true);
+      }
     } catch (error) {
       setBilingualStatus(error.message || '切换失败，请刷新页面后重试', 'error');
     }

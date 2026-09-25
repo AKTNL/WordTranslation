@@ -173,6 +173,7 @@
   let currentBilingualMode = 'original'; // 'original' | 'bilingual' | 'chinese'
   const pageParagraphsMap = new Map(); // pageNumber -> [{ orig, trans, pDiv, transDiv }]
   const renderedPagesSet = new Set(); // pageNumber set
+  const pageRenderTasks = new Map(); // pageNumber -> renderTask
   let pageLazyObserver = null;
   let bilingualObserver = null;
 
@@ -306,6 +307,10 @@
       pdfViewer.innerHTML = '';
       pageParagraphsMap.clear();
       renderedPagesSet.clear();
+      for (const [pNum, task] of pageRenderTasks.entries()) {
+        try { task.cancel(); } catch (e) {}
+      }
+      pageRenderTasks.clear();
 
       const loadingTask = pdfjsLib.getDocument({ data });
       currentPdfDoc = await loadingTask.promise;
@@ -409,6 +414,12 @@
     if (!currentPdfDoc || pageNumber < 1 || pageNumber > totalPages) return;
     renderedPagesSet.add(pageNumber);
 
+    const existingTaskBeforePage = pageRenderTasks.get(pageNumber);
+    if (existingTaskBeforePage) {
+      try { existingTaskBeforePage.cancel(); } catch (e) {}
+      pageRenderTasks.delete(pageNumber);
+    }
+
     const page = await currentPdfDoc.getPage(pageNumber);
     const viewport = page.getViewport({ scale: currentScale });
 
@@ -424,8 +435,8 @@
     }
 
     const canvas = pageDiv.querySelector('canvas') || document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    const outputScale = window.devicePixelRatio || 1;
+    const context = canvas.getContext ? canvas.getContext('2d') : null;
+    const outputScale = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
 
     canvas.width = Math.floor(viewport.width * outputScale);
     canvas.height = Math.floor(viewport.height * outputScale);
@@ -442,6 +453,13 @@
 
     if (!canvas.parentElement) pageDiv.appendChild(canvas);
 
+    // Cancel existing render task for this page if one is already running
+    const existingTask = pageRenderTasks.get(pageNumber);
+    if (existingTask) {
+      try { existingTask.cancel(); } catch (e) {}
+      pageRenderTasks.delete(pageNumber);
+    }
+
     // Text layer
     let textLayerDiv = pageDiv.querySelector('.textLayer');
     if (!textLayerDiv) {
@@ -452,10 +470,25 @@
     textLayerDiv.innerHTML = '';
     textLayerDiv.style.width = `${Math.floor(viewport.width)}px`;
     textLayerDiv.style.height = `${Math.floor(viewport.height)}px`;
-    textLayerDiv.style.setProperty('--scale-factor', viewport.scale);
+    if (textLayerDiv.style && textLayerDiv.style.setProperty) {
+      textLayerDiv.style.setProperty('--scale-factor', viewport.scale);
+    }
 
     // Render canvas
-    await page.render(renderContext).promise;
+    const renderTask = page.render(renderContext);
+    pageRenderTasks.set(pageNumber, renderTask);
+    try {
+      await renderTask.promise;
+    } catch (err) {
+      if (err && (err.name === 'RenderingCancelledException' || (err.message && err.message.includes('cancelled')))) {
+        return;
+      }
+      throw err;
+    } finally {
+      if (pageRenderTasks.get(pageNumber) === renderTask) {
+        pageRenderTasks.delete(pageNumber);
+      }
+    }
 
     // Render text layer
     const textContent = await page.getTextContent();
@@ -474,12 +507,14 @@
         citationParser.extractFromText(pageText);
       }
     }
-    pdfjsLib.renderTextLayer({
-      textContentSource: textContent,
-      container: textLayerDiv,
-      viewport: viewport,
-      textDivs: []
-    });
+    if (typeof pdfjsLib !== 'undefined' && pdfjsLib.renderTextLayer) {
+      pdfjsLib.renderTextLayer({
+        textContentSource: textContent,
+        container: textLayerDiv,
+        viewport: viewport,
+        textDivs: []
+      });
+    }
 
     // Extract & cluster paragraphs for bilingual rendering
     if (bilingualPanel && !pageParagraphsMap.has(pageNumber)) {
@@ -994,7 +1029,13 @@
       isFigureOrTableCaption,
       isTabularData,
       translatePageParagraphs,
-      pageParagraphsMap
+      pageParagraphsMap,
+      renderPage,
+      pageRenderTasks,
+      setCurrentPdfDoc: (doc, count = 1) => {
+        currentPdfDoc = doc;
+        totalPages = count;
+      }
     };
   }
 })();

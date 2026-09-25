@@ -34,6 +34,122 @@
 
   const currentHost = (typeof window !== 'undefined' && window.location && window.location.hostname) ? window.location.hostname : '';
 
+  const isReaderPage = typeof window !== 'undefined' && window.location && (
+    (typeof window.location.pathname === 'string' && (window.location.pathname.endsWith('/reader/reader.html') || window.location.pathname.includes('reader.html'))) ||
+    (typeof window.location.href === 'string' && window.location.href.includes('reader.html'))
+  );
+
+  let pageActive = false;
+  if (typeof window !== 'undefined') {
+    if (window.__PAPER_DICT_PAGE_ACTIVE__ !== undefined) {
+      pageActive = Boolean(window.__PAPER_DICT_PAGE_ACTIVE__);
+    } else if (typeof window.location?.href === 'string') {
+      pageActive = Boolean(isReaderPage);
+    } else if (settings && settings.pageActive !== undefined) {
+      pageActive = Boolean(settings.pageActive);
+    } else {
+      // In test mock environments without full URL, default to active
+      pageActive = true;
+    }
+  }
+
+  let pageToastTimer = null;
+  let lastToggleTime = 0;
+
+  function showPageToast(message) {
+    if (typeof document === 'undefined') return;
+    let toast = document.getElementById('paperdict-mode-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'paperdict-mode-toast';
+      toast.className = 'pd-mode-toast';
+      const container = document.body || document.documentElement;
+      if (container && typeof container.appendChild === 'function') {
+        container.appendChild(toast);
+      }
+    }
+    if (toast) {
+      toast.textContent = message;
+      if (toast.classList && typeof toast.classList.add === 'function') {
+        toast.classList.add('visible');
+      }
+      if (pageToastTimer) clearTimeout(pageToastTimer);
+      pageToastTimer = setTimeout(() => {
+        if (toast.classList && typeof toast.classList.remove === 'function') {
+          toast.classList.remove('visible');
+        }
+      }, 2200);
+    }
+  }
+
+  function setPageActive(active, options = {}) {
+    const nextActive = Boolean(active);
+    pageActive = nextActive;
+    if (typeof window !== 'undefined') {
+      window.__paperDictPageActive = pageActive;
+    }
+
+    if (!pageActive) {
+      hideTriggerIcon();
+      hideCard(true);
+      activeSelectionAnchor = null;
+
+      if (typeof window !== 'undefined' && window.paperBilingualManager) {
+        if (typeof window.paperBilingualManager.onPageDeactivated === 'function') {
+          window.paperBilingualManager.onPageDeactivated();
+        } else {
+          if (typeof window.paperBilingualManager.restoreOriginalView === 'function') {
+            window.paperBilingualManager.restoreOriginalView();
+          }
+          if (typeof window.paperBilingualManager.applyCapsuleEnabled === 'function') {
+            window.paperBilingualManager.applyCapsuleEnabled(false);
+          }
+        }
+      }
+
+      if (!options.silent) {
+        showPageToast('已关闭当前页面划词与翻译');
+      }
+    } else {
+      if (typeof window !== 'undefined' && window.paperBilingualManager) {
+        if (typeof window.paperBilingualManager.onPageActivated === 'function') {
+          window.paperBilingualManager.onPageActivated();
+        }
+      }
+
+      if (!options.silent) {
+        showPageToast('已开启当前页面划词与翻译 (选词即可查词)');
+      }
+    }
+
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+      try {
+        chrome.runtime.sendMessage({
+          type: 'PAGE_ACTIVE_CHANGED',
+          active: pageActive,
+          isReader: Boolean(isReaderPage)
+        }, () => {
+          if (chrome.runtime && chrome.runtime.lastError) {}
+        });
+      } catch (e) {}
+    }
+
+    return pageActive;
+  }
+
+  function togglePageActiveSafe(options = {}) {
+    const now = Date.now();
+    if (now - lastToggleTime < 250) return pageActive;
+    lastToggleTime = now;
+    return setPageActive(!pageActive, options);
+  }
+
+  if (typeof window !== 'undefined') {
+    window.__paperDictPageActive = pageActive;
+    window.__paperDictIsPageActive = () => pageActive;
+    window.__paperDictSetPageActive = (val, opts) => setPageActive(val, opts);
+  }
+
   function isBlacklisted() {
     if (!settings.blacklist || !Array.isArray(settings.blacklist)) return false;
     return settings.blacklist.some(domain => domain && (currentHost === domain || currentHost.endsWith('.' + domain)));
@@ -2063,7 +2179,7 @@
     const lookupToken = ++lookupGeneration;
     pendingSelectionData = null;
 
-    if ((!settings.enabled || isBlacklisted()) && !overrideText) {
+    if ((!pageActive || !settings.enabled || isBlacklisted()) && !overrideText) {
       clearActiveSelectionAnchor();
       return;
     }
@@ -2211,6 +2327,11 @@
   // Debounced check
   let checkTimer = null;
   function triggerSelectionCheck(e) {
+    if (!pageActive) {
+      hideTriggerIcon();
+      hideCard(true);
+      return;
+    }
     if (checkTimer) clearTimeout(checkTimer);
     checkTimer = setTimeout(() => {
       const selection = window.getSelection();
@@ -2228,6 +2349,7 @@
 
   // Single Mouse Up Listener (No duplicate listener)
   function onMouseUp(e) {
+    if (!pageActive) return;
     if (e.target && e.target.closest && e.target.closest('.paperdict-highlight')) {
       return;
     }
@@ -2245,12 +2367,14 @@
 
   // Key up for keyboard selections (Shift + Arrows)
   document.addEventListener('keyup', (e) => {
+    if (!pageActive) return;
     if (isSelectionNavigationKey(e)) {
       triggerSelectionCheck(e);
     }
   }, false);
 
   document.addEventListener('selectionchange', () => {
+    if (!pageActive) return;
     validateActiveDocumentSelection();
   }, false);
 
@@ -2284,11 +2408,55 @@
     }
   }, false);
 
-  // Context menu trigger from background
+  // In-page Alt+P shortcut fallback (Toggle page active)
+  document.addEventListener('keydown', (e) => {
+    if (e && e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'p' || e.key === 'P' || e.code === 'KeyP')) {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      togglePageActiveSafe();
+    }
+  }, true);
+
+  // Runtime message handler from popup and background
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-    chrome.runtime.onMessage.addListener((msg) => {
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (!msg) return;
+
       if (msg.type === 'TRIGGER_TRANSLATE_FROM_MENU' && msg.text) {
         processSelection(null, msg.text);
+        if (typeof sendResponse === 'function') sendResponse({ success: true });
+        return true;
+      }
+
+      if (msg.type === 'GET_PAGE_STATUS') {
+        const bilingualManager = typeof window !== 'undefined' ? window.paperBilingualManager : null;
+        if (typeof sendResponse === 'function') {
+          sendResponse({
+            success: true,
+            active: pageActive,
+            isReader: Boolean(isReaderPage),
+            mode: bilingualManager ? bilingualManager.mode : 'original',
+            total: bilingualManager && bilingualManager.elements ? bilingualManager.elements.length : 0,
+            translated: bilingualManager && typeof bilingualManager.getTranslatedCount === 'function' ? bilingualManager.getTranslatedCount() : 0
+          });
+        }
+        return true;
+      }
+
+      if (msg.type === 'SET_PAGE_ACTIVE') {
+        const newActive = msg.active !== undefined ? Boolean(msg.active) : !pageActive;
+        setPageActive(newActive);
+        if (typeof sendResponse === 'function') {
+          sendResponse({ success: true, active: pageActive });
+        }
+        return true;
+      }
+
+      if (msg.type === 'TOGGLE_PAGE_ACTIVE') {
+        const newActive = togglePageActiveSafe();
+        if (typeof sendResponse === 'function') {
+          sendResponse({ success: true, active: newActive });
+        }
+        return true;
       }
     });
   }

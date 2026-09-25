@@ -30,6 +30,24 @@
 
     <!-- Tab 1: Search & Settings -->
     <main id="tab-search-settings" class="tab-pane active">
+      <!-- Current Page Translation Master Switch (Phase 3) -->
+      <section class="page-active-section">
+        <div class="page-active-card" id="page-active-card">
+          <div class="page-active-info">
+            <div class="page-active-title-row">
+              <span class="page-active-dot" id="page-active-dot"></span>
+              <span class="page-active-title" id="page-active-title">当前页面划词与翻译</span>
+              <span class="page-shortcut-badge" title="快捷键开启或关闭当前页面">Alt+P</span>
+            </div>
+            <div class="page-active-desc" id="page-active-desc">当前网页: 检测中...</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-page-active">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </section>
+
       <!-- PDF Detection Banner -->
       <div id="pdf-detect-banner" class="pdf-detect-banner" style="display: none;">
         <div class="banner-content">

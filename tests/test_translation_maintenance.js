@@ -12,7 +12,10 @@ const {
 const { GlossaryService } = require('../extension/glossary_service.js');
 const {
   translatePageParagraphs,
-  pageParagraphsMap
+  pageParagraphsMap,
+  renderPage,
+  pageRenderTasks,
+  setCurrentPdfDoc
 } = require('../extension/reader/reader.js');
 
 const dictData = JSON.parse(
@@ -319,6 +322,134 @@ async function run() {
     } finally {
       pageParagraphsMap.delete(999);
       delete global.chrome;
+    }
+  });
+
+  await test('PDF reader renderPage cancels existing in-flight render tasks when called concurrently on the same page', async () => {
+    const originalDocument = global.document;
+
+    const mockCanvas = {
+      getContext: () => ({}),
+      style: {},
+      width: 0,
+      height: 0
+    };
+    mockCanvas.parentElement = {};
+
+    const mockTextLayer = {
+      innerHTML: '',
+      style: {
+        setProperty: () => {}
+      }
+    };
+
+    const mockPageDiv = {
+      style: {},
+      querySelector: (selector) => {
+        if (selector === 'canvas') return mockCanvas;
+        if (selector === '.textLayer') return mockTextLayer;
+        return null;
+      },
+      appendChild: () => {}
+    };
+
+    const mockRowDiv = { style: {} };
+    const mockBilingualPanel = {
+      style: {},
+      innerHTML: '',
+      appendChild: () => {}
+    };
+
+    global.document = {
+      getElementById: (id) => {
+        if (id === 'pdf-page-1') return mockPageDiv;
+        if (id === 'pdf-row-1') return mockRowDiv;
+        if (id === 'pdf-bilingual-1') return mockBilingualPanel;
+        return null;
+      },
+      createElement: (tag) => {
+        if (tag === 'canvas') return mockCanvas;
+        if (tag === 'div') return { style: {}, appendChild: () => {}, querySelector: () => null };
+        return { style: {} };
+      }
+    };
+
+    const renderTasks = [];
+    const mockPage = {
+      getViewport: ({ scale }) => ({ width: 600, height: 800, scale }),
+      render: () => {
+        let rejectPromise;
+        let resolvePromise;
+        const promise = new Promise((resolve, reject) => {
+          resolvePromise = resolve;
+          rejectPromise = reject;
+        });
+
+        const task = {
+          cancelled: false,
+          cancel: () => {
+            task.cancelled = true;
+            const err = new Error('Rendering cancelled');
+            err.name = 'RenderingCancelledException';
+            rejectPromise(err);
+          },
+          resolve: () => {
+            resolvePromise();
+          },
+          promise
+        };
+
+        renderTasks.push(task);
+        return task;
+      },
+      getTextContent: async () => ({ items: [] })
+    };
+
+    const mockDoc = {
+      getPage: async (num) => mockPage
+    };
+
+    setCurrentPdfDoc(mockDoc, 5);
+
+    try {
+      // Start first renderPage call (in-flight)
+      const p1 = renderPage(1);
+
+      // Yield event loop so p1 starts page.render and sets pageRenderTasks
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      assert.equal(renderTasks.length, 1);
+      assert.equal(pageRenderTasks.has(1), true);
+      assert.equal(pageRenderTasks.get(1), renderTasks[0]);
+      assert.equal(renderTasks[0].cancelled, false);
+
+      // Start second concurrent renderPage call on the same page
+      const p2 = renderPage(1);
+
+      // Yield event loop so p2 cancels renderTasks[0] and initiates renderTasks[1]
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      assert.equal(renderTasks.length, 2);
+      assert.equal(renderTasks[0].cancelled, true);
+      assert.equal(renderTasks[1].cancelled, false);
+      assert.equal(pageRenderTasks.get(1), renderTasks[1]);
+
+      // Resolve the second render task so p2 can complete
+      renderTasks[1].resolve();
+
+      // Both promises should resolve without throwing
+      await Promise.all([p1, p2]);
+
+      // After completion, pageRenderTasks should be cleaned up
+      assert.equal(pageRenderTasks.has(1), false);
+    } finally {
+      setCurrentPdfDoc(null, 0);
+      pageRenderTasks.clear();
+      if (originalDocument !== undefined) {
+        global.document = originalDocument;
+      } else {
+        delete global.document;
+      }
     }
   });
 

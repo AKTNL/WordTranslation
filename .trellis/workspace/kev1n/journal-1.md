@@ -168,7 +168,23 @@ Fixed formula-currency collisions in FormulaProtector, enhanced observer teardow
 
 [OK] **Merged & Released v2.3.1**
 
-## 2026-09-25 - Fix PDF Reader Paragraph Translation Index ReferenceError
+## 2026-09-25 - Plan Phase 3: Default-Off & Per-Page On-Demand Activation
+
+### Summary
+
+- User requested that the extension be disabled by default whenever the browser opens, and on every new page by default, requiring explicit manual activation to translate.
+- Clarified requirements and converged on **Option A (Per-page on-demand manual activation)**:
+  1. Default inactive state across all tabs and browser sessions (no selection listener popup, no capsule, action badge shows `OFF`).
+  2. Manual activation via Popup prominent toggle button and shortcut (`Alt+P`).
+  3. Single-tab isolation: activating on tab A does not affect tab B; closing or navigating resets or maintains page isolation.
+  4. Deactivation cleanly restores page state and hides floating capsule and translation UI.
+- Updated `.trellis/tasks/09-19-selection-translation-tool/prd.md` with Phase 3 requirements and acceptance criteria.
+
+### Status
+
+[OK] **Phase 3 Planned - Ready for Implementation**
+
+
 
 ### Summary
 
@@ -180,6 +196,27 @@ Fixed formula-currency collisions in FormulaProtector, enhanced observer teardow
 ### Status
 
 [OK] **Verified & Ready to Push**
+
+---
+
+## 2026-09-22 - Phase 3 Default-Off & Per-Page On-Demand Activation
+
+### Summary
+
+- Implemented Phase 3 "默认静默与单页面按需手动激活":
+  1. Default inactive (`pageActive = false`) for general web pages; badges show `OFF` with `#64748b` gray background.
+  2. PDF reader (`reader.html`) stays active by default (`pageActive = true`) with emerald green `ON` badge.
+  3. Registered Chrome command `toggle-page-translation` (`Alt+P`) and `toggle-bilingual-mode` (`Alt+B`) in `manifest.json`.
+  4. Added master switch card in popup UI (`popup.html`, `popup.css`, `popup.js`) showing active status and domain.
+  5. Implemented runtime messages (`GET_PAGE_STATUS`, `SET_PAGE_ACTIVE`, `TOGGLE_PAGE_ACTIVE`, `PAGE_ACTIVE_CHANGED`) with debounce protection.
+  6. Updated `extension/bilingual.js` to suppress capsule creation when inactive, and handle `onPageActivated` and `onPageDeactivated` (invoking `restoreOriginalView()`).
+  7. Added comprehensive unit and regression tests in `tests/test_page_activation.js`.
+- Verified entire test suite: 12 test suites, 421 passed, 0 failed.
+
+### Status
+
+[OK] **Phase 3 Complete & Verified**
+
 
 
 

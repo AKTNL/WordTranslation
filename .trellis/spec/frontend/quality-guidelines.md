@@ -66,6 +66,12 @@ Questions to answer:
 7. **段落发现与动态调度去重**：
    - 首屏可见正文应立即入队，后续正文交给 `IntersectionObserver`，动态插入和文本水合交给 `MutationObserver`。
    - 正文发现必须排除导航、控件、代码、公式、参考文献及扩展生成节点，并在父级聚合块与具体子段落之间只保留一个翻译目标。
+8. **单页按需激活与静默默认状态 (Per-Page Activation & Default Inactivity)**：
+   - 插件在普通网页（包括学术网页 arXiv, Nature 等）中必须默认保持静默（`pageActive = false`），不监听划词、不渲染速读胶囊、扩展图标 Badge 默认为灰底 `OFF`（`#64748b`）。
+   - 内置 PDF 阅读器（`reader.html`）作为专有学术阅读工作区保持默认开启（`pageActive = true`，Badge 绿底 `ON` `#10b981`）。
+   - 单页开启状态必须严格隔离在标签页内存中，严禁持久化到全局 `chrome.storage.sync` 中从而污染其他标签页。
+   - 关闭时必须完整执行清理流程：隐藏并销毁查词卡片与触发图标、重置选区锚点、销毁双语速读胶囊、调用 `restoreOriginalView()` 恢复网页原始 DOM。
+   - 快捷键（`Alt+P`）兼顾 `chrome.commands` 与页面 `keydown` 回退机制时，必须配备防抖节流保护（如 250ms 门限），杜绝并发双击回环。
 
 ---
 

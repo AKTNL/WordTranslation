@@ -48,6 +48,42 @@ function isPdfUrl(url) {
   return false;
 }
 
+function isReaderUrl(url) {
+  if (!url) return false;
+  return url.includes('reader/reader.html');
+}
+
+function updateTabBadge(tabId, active, isReader = false) {
+  if (typeof chrome === 'undefined' || !chrome.action) return;
+  const isOnlineReader = isReader;
+  const text = isOnlineReader ? 'ON' : (active ? 'ON' : 'OFF');
+  const color = (isOnlineReader || active) ? '#10b981' : '#64748b';
+  const title = (isOnlineReader || active)
+    ? 'PaperDict: 当前页面已开启划词与翻译 (快捷键 Alt+P)'
+    : 'PaperDict: 当前页面未开启划词与翻译 (点击或按 Alt+P 开启)';
+
+  try {
+    if (tabId) {
+      chrome.action.setBadgeText({ text, tabId });
+      chrome.action.setBadgeBackgroundColor({ color, tabId });
+      if (chrome.action.setTitle) {
+        chrome.action.setTitle({ text: title, tabId });
+      }
+    } else {
+      chrome.action.setBadgeText({ text });
+      chrome.action.setBadgeBackgroundColor({ color });
+      if (chrome.action.setTitle) {
+        chrome.action.setTitle({ text: title });
+      }
+    }
+  } catch (e) {}
+}
+
+// Set default badge for newly opened tabs or initial load
+if (typeof chrome !== 'undefined' && chrome.action) {
+  updateTabBadge(null, false, false);
+}
+
 // Initialize settings and context menu on install
 if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onInstalled) {
   chrome.runtime.onInstalled.addListener(async () => {
@@ -106,9 +142,15 @@ if (typeof chrome !== 'undefined' && chrome.webNavigation && chrome.webNavigatio
   });
 }
 
-// Fallback tab update listener for PDF detection
+// Fallback tab update listener for PDF detection and per-page badge state
 if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onUpdated) {
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    const currentUrl = (tab && tab.url) || changeInfo.url;
+    if (changeInfo.status === 'loading' || changeInfo.url) {
+      const isReader = isReaderUrl(currentUrl);
+      updateTabBadge(tabId, false, isReader);
+    }
+
     const url = changeInfo.url;
     if (!url || !/^https?:\/\//i.test(url)) return;
 
@@ -120,6 +162,23 @@ if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onUpdated) {
         }
       });
     }
+  });
+}
+
+// Global Keyboard Shortcut Commands Listener (Alt+P, Alt+B)
+if (typeof chrome !== 'undefined' && chrome.commands && chrome.commands.onCommand) {
+  chrome.commands.onCommand.addListener(async (command) => {
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = tabs && tabs[0];
+      if (!tab || !tab.id) return;
+
+      if (command === 'toggle-page-translation') {
+        chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_PAGE_ACTIVE' }).catch(() => {});
+      } else if (command === 'toggle-bilingual-mode') {
+        chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_BILINGUAL_MODE' }).catch(() => {});
+      }
+    } catch (e) {}
   });
 }
 
@@ -344,6 +403,17 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
           aborted: Boolean(isAbort)
         });
       });
+    return true;
+  }
+
+  if (request.type === 'PAGE_ACTIVE_CHANGED') {
+    const tabId = (sender && sender.tab && sender.tab.id) || request.tabId;
+    const active = Boolean(request.active);
+    const isReader = Boolean(request.isReader);
+    if (tabId) {
+      updateTabBadge(tabId, active, isReader);
+    }
+    sendResponse({ success: true, active });
     return true;
   }
 
@@ -642,7 +712,9 @@ if (typeof module !== 'undefined' && module.exports) {
     handleContextExplanation,
     activeRequests,
     pendingInFlight,
-    memoryCache
+    memoryCache,
+    updateTabBadge,
+    isReaderUrl
   };
 }
 

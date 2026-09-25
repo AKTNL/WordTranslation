@@ -68,5 +68,21 @@
         "<all_urls>"
       ]
     }
-  ]
+  ],
+  "commands": {
+    "toggle-page-translation": {
+      "suggested_key": {
+        "default": "Alt+P",
+        "mac": "Alt+P"
+      },
+      "description": "PaperDict: 开启/关闭当前页面划词与翻译"
+    },
+    "toggle-bilingual-mode": {
+      "suggested_key": {
+        "default": "Alt+B",
+        "mac": "Alt+B"
+      },
+      "description": "PaperDict: 切换论文双语对照 / 纯中文速读"
+    }
+  }
 }

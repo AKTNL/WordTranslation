@@ -113,6 +113,91 @@ body {
   border-radius: 10px;
 }
 
+/* Current Page Master Switch Card (Phase 3) */
+.page-active-section {
+  padding: 12px 16px 8px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.page-active-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  transition: all 0.2s ease;
+}
+
+.page-active-card.active {
+  background: #ecfdf5;
+  border-color: #10b981;
+  box-shadow: 0 1px 3px rgba(16, 185, 129, 0.12);
+}
+
+.page-active-card.disabled {
+  opacity: 0.72;
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.page-active-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.page-active-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.page-active-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+  display: inline-block;
+  flex-shrink: 0;
+  transition: background-color 0.2s ease;
+}
+
+.page-active-dot.active {
+  background: #10b981;
+  box-shadow: 0 0 0 2.5px rgba(16, 185, 129, 0.2);
+}
+
+.page-active-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.2px;
+}
+
+.page-shortcut-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #475569;
+  background: #e2e8f0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.2px;
+}
+
+.page-active-desc {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.35;
+}
+
+.page-active-card.active .page-active-desc {
+  color: #047857;
+  font-weight: 500;
+}
+
 /* PDF Detection Banner */
 .pdf-detect-banner {
   background: #eff6ff;
