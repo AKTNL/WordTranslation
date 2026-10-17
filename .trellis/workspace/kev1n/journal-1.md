@@ -233,6 +233,25 @@ Fixed formula-currency collisions in FormulaProtector, enhanced observer teardow
 
 [OK] **Published v2.4.0**
 
+## 2026-10-17 - Release v2.5.0 (PDF HTML Reflow View & Cross-View Notes Parity)
+
+### Summary
+
+- Bumped extension version to `2.5.0` in `package.json` and `extension/manifest.json`.
+- Updated `.github/workflows/release.yml` with comprehensive v2.5.0 release highlights.
+- Highlighted key features:
+  1. PDF to HTML reflow view with progressive chunked rendering and `htmlBuildToken` cancellation.
+  2. Translucent highlight styles (`rgba(..., 0.45)`) and multi-segment cross-node wrapping (`splitRangeIntoSegments`).
+  3. View-scoped highlight restore (`__paperDictHighlightContext`) and cross-view normalized text index matching (`normalizePaperMatch` + `normalizeTextIndex`).
+  4. Reader document identity `docKey` resolution and live notes/glossary broadcasting.
+  5. Feature parity for HTML view: in-situ lazy translation (bilingual / full Chinese), page navigation, toolbar persistence.
+  6. Unified Markdown export schema across single and multi-document digests.
+- All 13 test suites (452 assertions) and diagnostic test suite passing 100%.
+
+### Status
+
+[OK] **Published v2.5.0**
+
 
 
 
