@@ -55,6 +55,17 @@
   let htmlViewEl = null;
   let htmlBuildToken = 0;
 
+  const zoomButtons = typeof document !== 'undefined' ? document.getElementById('zoom-buttons') : null;
+
+  // Reflowed HTML view state: per-paragraph translation registry, lazy
+  // translation queue and observers (bilingual mode + page position tracking).
+  const htmlParaItems = new Map(); // p element -> { orig, pageNumber, index, status, trans, transEl }
+  const htmlTranslationQueue = [];
+  let htmlTranslationRunning = false;
+  let htmlBilingualObserver = null;
+  let htmlPageObserver = null;
+  const visibleHtmlPages = new Set();
+
   // Identity of the currently open PDF, shared with the content script so
   // highlights and notes key off the real document instead of the reader URL.
   function getReaderDocKey() {
@@ -66,6 +77,23 @@
     if (typeof AnnotationManager === 'undefined') return;
     const key = AnnotationManager.getDocKey(url || '', name || '');
     if (typeof window !== 'undefined') window.__paperDictDocKey = key;
+  }
+
+  // Scope highlight restore to the currently visible view so switching between
+  // the PDF pages and the reflowed HTML text never hides (or double-wraps)
+  // marks. The page side skips the HTML container; the HTML side restores
+  // inside its own container only.
+  function resolveHighlightRootContext() {
+    if (currentViewMode === 'html' && htmlViewEl && typeof document !== 'undefined' && document.contains(htmlViewEl)) {
+      return { root: htmlViewEl };
+    }
+    if (pdfViewer) {
+      return { root: pdfViewer, skipSelector: '.pdf-html-view' };
+    }
+    return null;
+  }
+  if (typeof window !== 'undefined') {
+    window.__paperDictHighlightContext = resolveHighlightRootContext;
   }
   const citationParser = typeof CitationParser !== 'undefined' ? new CitationParser() : null;
 
@@ -79,6 +107,9 @@
 
   async function updateReaderNotes() {
     if (!annotationManager) return;
+    // Always re-read chrome.storage: content.js owns the writes and keeps its
+    // own in-memory copy, so this instance's cached store can be stale.
+    await annotationManager.loadAll();
     const docKey = getReaderDocKey();
     const notes = await annotationManager.getAnnotationsForDoc(docKey);
     if (readerNotesCount) readerNotesCount.textContent = notes.length;
@@ -122,6 +153,7 @@
   if (btnDrawerExportMd) {
     btnDrawerExportMd.addEventListener('click', async () => {
       if (!annotationManager) return;
+      await annotationManager.loadAll();
       const docKey = getReaderDocKey();
       const notes = await annotationManager.getAnnotationsForDoc(docKey);
       const terms = glossaryExtractor ? glossaryExtractor.getAllTerms() : [];
@@ -138,6 +170,27 @@
       a.click();
       URL.revokeObjectURL(url);
     });
+  }
+
+  // Live refresh: content.js dispatches this after every save/delete so the
+  // counter and an open drawer stay in sync without polling.
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('paperdict:annotations-changed', () => { updateReaderNotes(); });
+  }
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.paperdict_annotations) updateReaderNotes();
+    });
+  }
+
+  // Share the extracted paper glossary with content.js so "论文专属术语"
+  // lookups work for selections inside the reader page.
+  function broadcastPaperGlossary() {
+    if (!glossaryExtractor || typeof window === 'undefined' ||
+        typeof window.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+    try {
+      window.dispatchEvent(new CustomEvent('paperdict:glossary-updated', { detail: { terms: glossaryExtractor.getAllTerms() } }));
+    } catch (e) {}
   }
 
   // Reader Glossary Elements
@@ -325,6 +378,7 @@
       zoomControls.style.display = 'inline-flex';
       if (bilingualControls) bilingualControls.style.display = 'inline-flex';
       if (viewModeControls) viewModeControls.style.display = 'inline-flex';
+      if (zoomButtons) zoomButtons.style.display = 'inline-flex';
 
       resetHtmlView();
       pdfViewer.innerHTML = '';
@@ -364,6 +418,9 @@
       // Immediately render first visible pages
       await renderPage(1);
       if (totalPages >= 2) renderPage(2);
+
+      // Show the stored notes count without waiting for the first drawer open.
+      updateReaderNotes();
     } catch (err) {
       console.error('Failed to load PDF:', err);
       alert('加载 PDF 失败: ' + err.message);
@@ -530,6 +587,7 @@
       if (citationParser) {
         citationParser.extractFromText(pageText);
       }
+      broadcastPaperGlossary();
     }
     if (typeof pdfjsLib !== 'undefined' && pdfjsLib.renderTextLayer) {
       pdfjsLib.renderTextLayer({
@@ -836,6 +894,197 @@
     }
   }
 
+  // ---- HTML 文本视图双语: 段落级懒翻译, 与页面侧栏共用翻译与公式保护 ----
+  function ensureHtmlTransEl(p, info) {
+    if (info.transEl) return info.transEl;
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
+    if (!p || !p.parentNode) return null;
+    const div = document.createElement('div');
+    div.className = 'pdf-html-trans';
+    if (p.nextSibling) {
+      p.parentNode.insertBefore(div, p.nextSibling);
+    } else {
+      p.parentNode.appendChild(div);
+    }
+    info.transEl = div;
+    return div;
+  }
+
+  function applyHtmlModeToParagraph(p, info) {
+    if (!info) return;
+    if (info.transEl && info.transEl.style) {
+      info.transEl.style.display = currentBilingualMode === 'original' ? 'none' : 'block';
+    }
+    if (p && p.classList) {
+      if (currentBilingualMode === 'chinese' && info.status === 'done') p.classList.add('pdf-html-orig-hidden');
+      else p.classList.remove('pdf-html-orig-hidden');
+    }
+  }
+
+  function applyHtmlBilingualMode() {
+    for (const [p, info] of htmlParaItems.entries()) {
+      applyHtmlModeToParagraph(p, info);
+    }
+  }
+
+  async function translateHtmlParagraph(p, info) {
+    if (!info || info.status === 'done') return;
+    info.status = 'translating';
+    const transEl = ensureHtmlTransEl(p, info);
+    if (transEl) {
+      transEl.innerHTML = '<div class="pdf-p-loading">正在速译学术段落...</div>';
+      applyHtmlModeToParagraph(p, info);
+    }
+
+    let textToTranslate = info.orig;
+    let tokenMap = null;
+
+    if (formulaProtector) {
+      const pRes = formulaProtector.protect(info.orig);
+      textToTranslate = pRes.protectedText;
+      tokenMap = pRes.tokenMap;
+    }
+
+    const reqId = `reader_html_p${info.pageNumber || 0}_${info.index || 0}_${Date.now()}`;
+    try {
+      const res = await chrome.runtime.sendMessage({
+        type: 'TRANSLATE_ONLINE',
+        text: textToTranslate,
+        requestId: reqId
+      });
+
+      if (res && res.success && res.translation) {
+        let finalText = res.translation;
+        if (formulaProtector && tokenMap) {
+          finalText = formulaProtector.restore(res.translation, tokenMap);
+        }
+        info.trans = finalText;
+        info.status = 'done';
+        if (transEl) transEl.innerHTML = finalText;
+        applyHtmlModeToParagraph(p, info);
+      } else {
+        const errorMessage = escapeHtml(res?.error || '翻译失败，请稍后重试');
+        info.status = 'idle';
+        if (transEl) {
+          transEl.innerHTML = `
+            <span style="color:#f87171;font-size:12px;">(${errorMessage})</span>
+            <button class="pdf-btn-retry" style="margin-left:6px;padding:1px 5px;font-size:11px;background:#334155;border:1px solid #475569;border-radius:3px;color:#93c5fd;cursor:pointer;">重试</button>
+          `;
+          if (typeof transEl.querySelector === 'function') {
+            const btnR = transEl.querySelector('.pdf-btn-retry');
+            if (btnR) {
+              btnR.onclick = () => {
+                info.status = 'idle';
+                translateHtmlParagraph(p, info);
+              };
+            }
+          }
+          applyHtmlModeToParagraph(p, info);
+        }
+      }
+    } catch (e) {
+      info.status = 'idle';
+      if (transEl) {
+        transEl.innerHTML = '<span style="color:#f87171;font-size:12px;">(网络超时)</span>';
+        applyHtmlModeToParagraph(p, info);
+      }
+    }
+  }
+
+  function queueHtmlParagraphTranslation(p, info) {
+    if (!info || info.status !== 'idle') return;
+    if (currentBilingualMode === 'original' || currentViewMode !== 'html') return;
+    info.status = 'queued';
+    htmlTranslationQueue.push({ p, info });
+    processHtmlTranslationQueue();
+  }
+
+  async function processHtmlTranslationQueue() {
+    if (htmlTranslationRunning) return;
+    htmlTranslationRunning = true;
+    try {
+      while (htmlTranslationQueue.length > 0) {
+        const job = htmlTranslationQueue.shift();
+        if (!job || !job.info) continue;
+        if (currentBilingualMode === 'original' || currentViewMode !== 'html') {
+          job.info.status = 'idle';
+          continue;
+        }
+        await translateHtmlParagraph(job.p, job.info);
+      }
+    } finally {
+      htmlTranslationRunning = false;
+    }
+  }
+
+  function isHtmlParagraphNearViewport(p) {
+    if (!p || typeof p.getBoundingClientRect !== 'function' || typeof window === 'undefined') return false;
+    const rect = p.getBoundingClientRect();
+    return Boolean(rect) && rect.bottom > -320 && rect.top < (window.innerHeight + 320);
+  }
+
+  function enqueueVisibleHtmlParagraphs() {
+    if (currentBilingualMode === 'original' || currentViewMode !== 'html') return;
+    for (const [p, info] of htmlParaItems.entries()) {
+      if (info.status !== 'idle') continue;
+      if (isHtmlParagraphNearViewport(p)) queueHtmlParagraphTranslation(p, info);
+    }
+  }
+
+  function setupHtmlBilingualObserver() {
+    if (htmlBilingualObserver) {
+      htmlBilingualObserver.disconnect();
+      htmlBilingualObserver = null;
+    }
+    if (typeof IntersectionObserver === 'undefined' || !htmlViewEl) return;
+    htmlBilingualObserver = new IntersectionObserver((entries) => {
+      if (currentBilingualMode === 'original' || currentViewMode !== 'html') return;
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          const info = htmlParaItems.get(entry.target);
+          if (info) queueHtmlParagraphTranslation(entry.target, info);
+        }
+      }
+    }, {
+      root: viewerContainer,
+      rootMargin: '320px 0px 320px 0px',
+      threshold: 0.01
+    });
+    for (const p of htmlParaItems.keys()) htmlBilingualObserver.observe(p);
+  }
+
+  // Track which reflowed page section is on screen so the page input and the
+  // bilingual lazy loader follow scrolling in HTML mode.
+  function setupHtmlPageObserver() {
+    if (htmlPageObserver) {
+      htmlPageObserver.disconnect();
+      htmlPageObserver = null;
+    }
+    if (typeof IntersectionObserver === 'undefined' || !htmlViewEl) return;
+    htmlPageObserver = new IntersectionObserver((entries) => {
+      if (currentViewMode !== 'html') return;
+      for (const entry of entries) {
+        const num = parseInt(entry.target.dataset.pageNumber, 10);
+        if (!num) continue;
+        if (entry.isIntersecting) visibleHtmlPages.add(num);
+        else visibleHtmlPages.delete(num);
+      }
+      if (visibleHtmlPages.size > 0) {
+        const next = Math.min(...visibleHtmlPages);
+        if (next !== currentPage) {
+          currentPage = next;
+          if (pageNumInput) pageNumInput.value = next;
+        }
+      }
+    }, {
+      root: viewerContainer,
+      rootMargin: '-35% 0px -35% 0px',
+      threshold: 0
+    });
+    const sections = htmlViewEl.querySelectorAll('.pdf-html-page');
+    sections.forEach((section) => htmlPageObserver.observe(section));
+  }
+
   function setReaderBilingualMode(mode) {
     currentBilingualMode = mode;
 
@@ -869,7 +1118,14 @@
       }
     });
 
-    if (mode !== 'original') {
+    // The reflowed HTML view renders translations as per-paragraph blocks.
+    applyHtmlBilingualMode();
+    if (currentViewMode === 'html') {
+      if (mode !== 'original') {
+        setupHtmlBilingualObserver();
+        enqueueVisibleHtmlParagraphs();
+      }
+    } else if (mode !== 'original') {
       translatePageParagraphs(currentPage);
     }
   }
@@ -887,6 +1143,17 @@
   function resetHtmlView() {
     currentViewMode = 'page';
     htmlBuildToken++;
+    htmlParaItems.clear();
+    htmlTranslationQueue.length = 0;
+    visibleHtmlPages.clear();
+    if (htmlBilingualObserver) {
+      htmlBilingualObserver.disconnect();
+      htmlBilingualObserver = null;
+    }
+    if (htmlPageObserver) {
+      htmlPageObserver.disconnect();
+      htmlPageObserver = null;
+    }
     if (htmlViewEl) {
       htmlViewEl.innerHTML = '';
       htmlViewEl.style.display = 'none';
@@ -901,6 +1168,9 @@
     ensureHtmlViewEl();
     if (!htmlViewEl) return;
     htmlViewEl.innerHTML = '<div class="pdf-html-loading">正在将 PDF 转换为 HTML 文本视图...</div>';
+    htmlParaItems.clear();
+    htmlTranslationQueue.length = 0;
+    visibleHtmlPages.clear();
 
     const fragment = document.createDocumentFragment();
     let paraCount = 0;
@@ -917,6 +1187,21 @@
       if (token !== htmlBuildToken) return;
 
       const paragraphs = clusterPdfTextIntoParagraphs(textContent);
+
+      // Cover pages that were never canvas-rendered: feed the same paragraph
+      // text into the paper glossary and citation indexes.
+      if (paragraphs.length > 0) {
+        const pageText = paragraphs.join('\n');
+        if (glossaryExtractor) {
+          glossaryExtractor.extractFromText(pageText);
+          if (dictService) dictService.setPaperGlossary(glossaryExtractor);
+          if (readerGlossaryCount) readerGlossaryCount.textContent = glossaryExtractor.getAllTerms().length;
+        }
+        if (citationParser) {
+          citationParser.extractFromText(pageText);
+        }
+      }
+
       const section = document.createElement('section');
       section.className = 'pdf-html-page';
       section.dataset.pageNumber = String(pageNumber);
@@ -933,6 +1218,7 @@
         p.dataset.paraIndex = String(index);
         p.textContent = paragraphText;
         section.appendChild(p);
+        htmlParaItems.set(p, { orig: paragraphText, pageNumber, index, status: 'idle', trans: null, transEl: null });
         paraCount++;
       });
 
@@ -948,6 +1234,7 @@
     if (paraCount === 0) {
       htmlViewEl.innerHTML = '<div class="pdf-html-loading">（未能从该 PDF 提取到可读正文段落）</div>';
     }
+    broadcastPaperGlossary();
   }
 
   function setViewMode(mode) {
@@ -961,26 +1248,64 @@
     const rows = document.querySelectorAll('.pdf-page-row');
     rows.forEach((row) => { row.style.display = nextMode === 'page' ? '' : 'none'; });
 
-    if (pageControls) pageControls.style.display = nextMode === 'page' ? 'inline-flex' : 'none';
-    if (zoomControls) zoomControls.style.display = nextMode === 'page' ? 'inline-flex' : 'none';
-    if (bilingualControls) bilingualControls.style.display = nextMode === 'page' ? 'inline-flex' : 'none';
+    // Page navigation and the bilingual mode switch apply to both views; only
+    // the zoom controls are specific to the rendered PDF pages.
+    if (pageControls) pageControls.style.display = 'inline-flex';
+    if (bilingualControls) bilingualControls.style.display = 'inline-flex';
+    if (zoomButtons) zoomButtons.style.display = nextMode === 'page' ? 'inline-flex' : 'none';
 
     if (nextMode === 'html') {
       ensureHtmlViewEl();
       if (htmlViewEl) htmlViewEl.style.display = 'block';
       if (readerBilingualStatus) {
-        readerBilingualStatus.textContent = 'HTML 文本视图 (支持划词查词与批注)';
-        readerBilingualStatus.style.color = '#4ade80';
+        if (currentBilingualMode === 'bilingual') {
+          readerBilingualStatus.textContent = '双语对照已开启';
+          readerBilingualStatus.style.color = '#60a5fa';
+        } else if (currentBilingualMode === 'chinese') {
+          readerBilingualStatus.textContent = '纯中文速读已开启';
+          readerBilingualStatus.style.color = '#4ade80';
+        } else {
+          readerBilingualStatus.textContent = 'HTML 文本视图 (支持划词查词与批注)';
+          readerBilingualStatus.style.color = '#4ade80';
+        }
+      }
+      // Page-view translations are not useful while the pages are hidden.
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ type: 'CANCEL_ALL_TRANSLATIONS', prefix: 'reader_p' }).catch(() => {});
       }
       buildHtmlDocument().then(() => {
+        if (currentViewMode === 'html' && htmlViewEl && htmlViewEl.style.display !== 'none') {
+          setupHtmlBilingualObserver();
+          setupHtmlPageObserver();
+          if (currentBilingualMode !== 'original') {
+            applyHtmlBilingualMode();
+            enqueueVisibleHtmlParagraphs();
+          }
+        }
         if (typeof window !== 'undefined' && typeof window.__paperDictRestoreHighlights === 'function') {
           window.__paperDictRestoreHighlights(150);
         }
       });
     } else {
       if (htmlViewEl) htmlViewEl.style.display = 'none';
+      // Reflowed-view translations would only write into the hidden HTML view.
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ type: 'CANCEL_ALL_TRANSLATIONS', prefix: 'reader_html_' }).catch(() => {});
+      }
       updateZoomDisplay();
-      Array.from(renderedPagesSet).forEach((pageNumber) => renderPage(pageNumber));
+      const pending = Array.from(renderedPagesSet).map((pageNumber) => {
+        try {
+          return Promise.resolve(renderPage(pageNumber)).catch(() => {});
+        } catch (e) {
+          return Promise.resolve();
+        }
+      });
+      // Re-rendering wipes the text layers, so restore once they are rebuilt.
+      Promise.all(pending).then(() => {
+        if (typeof window !== 'undefined' && typeof window.__paperDictRestoreHighlights === 'function') {
+          window.__paperDictRestoreHighlights(80);
+        }
+      });
       if (currentBilingualMode !== 'original') translatePageParagraphs(currentPage);
     }
   }
@@ -1111,11 +1436,15 @@
   function scrollToPage(p) {
     currentPage = p;
     if (pageNumInput) pageNumInput.value = p;
-    if (typeof document !== 'undefined') {
-      const el = document.getElementById(`pdf-page-${p}`);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
+    if (typeof document === 'undefined') return;
+    if (currentViewMode === 'html') {
+      const section = document.querySelector(`.pdf-html-page[data-page-number="${p}"]`);
+      if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    const el = document.getElementById(`pdf-page-${p}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }
 
@@ -1168,6 +1497,8 @@
       isTabularData,
       translatePageParagraphs,
       pageParagraphsMap,
+      translateHtmlParagraph,
+      htmlParaItems,
       renderPage,
       pageRenderTasks,
       setViewMode,

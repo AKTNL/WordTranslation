@@ -30,6 +30,12 @@
   const findInTextIndex = typeof globalThis.PaperDictSelectionAnchor.findInTextIndex === 'function'
     ? globalThis.PaperDictSelectionAnchor.findInTextIndex
     : () => null;
+  const normalizePaperMatch = typeof globalThis.PaperDictSelectionAnchor.normalizePaperMatch === 'function'
+    ? globalThis.PaperDictSelectionAnchor.normalizePaperMatch
+    : (value) => String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  const normalizeTextIndex = typeof globalThis.PaperDictSelectionAnchor.normalizeTextIndex === 'function'
+    ? globalThis.PaperDictSelectionAnchor.normalizeTextIndex
+    : () => null;
 
   // Default configuration
   let settings = {
@@ -1670,7 +1676,7 @@
     if (btnCardExport && annotationManager) {
       btnCardExport.onclick = async (e) => {
         e.stopPropagation();
-        const docKey = AnnotationManager.getDocKey(window.location.href, document.title);
+        const docKey = resolveDocKey();
         const notes = await annotationManager.getAnnotationsForDoc(docKey);
         const terms = glossaryExtractor ? glossaryExtractor.getAllTerms() : [];
 
@@ -1776,15 +1782,48 @@
     return AnnotationManager.getDocKey(href, title);
   }
 
+  // The reader supplies a view-scoped context (see reader.js) so highlights are
+  // restored into the currently visible view instead of whichever copy of the
+  // text happens to come first in the document (PDF text layer vs reflowed HTML).
+  function resolveHighlightContext() {
+    const fallback = { root: document.body, skipSelector: '' };
+    if (typeof window !== 'undefined' && typeof window.__paperDictHighlightContext === 'function') {
+      try {
+        const ctx = window.__paperDictHighlightContext();
+        if (ctx && ctx.root && typeof document.contains === 'function' && document.contains(ctx.root)) {
+          return { root: ctx.root, skipSelector: typeof ctx.skipSelector === 'string' ? ctx.skipSelector : '' };
+        }
+      } catch (e) {}
+    }
+    return fallback;
+  }
+
+  // Let in-page listeners (the PDF reader) refresh notes counters immediately
+  // after a save or delete without polling chrome.storage.
+  function notifyAnnotationsChanged() {
+    if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+    try {
+      window.dispatchEvent(new CustomEvent('paperdict:annotations-changed', { detail: { docKey: resolveDocKey() } }));
+    } catch (e) {}
+  }
+
+  function persistAnnotation(data) {
+    const result = annotationManager.saveAnnotation(data);
+    Promise.resolve(result).then(() => notifyAnnotationsChanged()).catch(() => {});
+    return result;
+  }
+
   function applyMarkStyle(mark, colorKey) {
     mark.className = 'paperdict-highlight';
     mark.dataset.color = colorKey || 'yellow';
   }
 
-  function queryAnnotationMarks(annotationId) {
-    if (!annotationId || typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return [];
+  function queryAnnotationMarks(annotationId, root = null) {
+    if (!annotationId || typeof document === 'undefined') return [];
+    const scope = (root && typeof root.querySelectorAll === 'function') ? root : document;
+    if (typeof scope.querySelectorAll !== 'function') return [];
     try {
-      return Array.from(document.querySelectorAll(`mark.paperdict-highlight[data-annotation-id="${cssEscape(annotationId)}"]`));
+      return Array.from(scope.querySelectorAll(`mark.paperdict-highlight[data-annotation-id="${cssEscape(annotationId)}"]`));
     } catch (e) {
       return [];
     }
@@ -1825,14 +1864,15 @@
     }
   }
 
-  // Re-apply one annotation to the live DOM. All stored segments are located
-  // against a single text index, then wrapped back-to-front so earlier offsets
-  // stay valid. A legacy single-string annotation is matched across nodes as a
-  // whole.
-  function restoreAnnotation(anno) {
+  // Re-apply one annotation to the live DOM. Matching is scoped to the current
+  // view's root (reader.js supplies it via __paperDictHighlightContext) so a
+  // mark is never wrapped into a hidden copy of the text. The shared indexes
+  // are built once per restore pass by restorePageHighlights.
+  function restoreAnnotation(anno, restoreCtx) {
     if (!anno || !anno.id) return 0;
     if (typeof document === 'undefined' || !document.body) return 0;
-    if (queryAnnotationMarks(anno.id).length > 0) return 0;
+    if (!restoreCtx || !restoreCtx.index) return 0;
+    if (queryAnnotationMarks(anno.id, restoreCtx.root).length > 0) return 0;
 
     const storedSegments = (Array.isArray(anno.segments) && anno.segments.length > 0)
       ? anno.segments.slice()
@@ -1841,7 +1881,7 @@
 
     ensureHighlightStyles();
 
-    const index = buildTextIndex(document.body);
+    const index = restoreCtx.index;
     if (!index || !index.text) return 0;
 
     const singleSpan = storedSegments.length === 1;
@@ -1862,6 +1902,23 @@
       for (const segment of hit.segments) planned.push(segment);
       cursor = hit.end;
       if (singleSpan) break;
+    }
+
+    // Cross-view fallback: the quote may have been stored from the other
+    // reader view, whose text differs (de-hyphenated HTML paragraphs vs the
+    // raw PDF text layer). Retry against a normalized copy of the same index.
+    if (planned.length === 0) {
+      const needle = normalizePaperMatch(storedSegments.join(' '));
+      if (needle.length >= 2) {
+        if (!restoreCtx.normalizedIndex) restoreCtx.normalizedIndex = normalizeTextIndex(index);
+        const normalizedIndex = restoreCtx.normalizedIndex;
+        if (normalizedIndex && normalizedIndex.text) {
+          const hit = findInTextIndex(normalizedIndex, needle, 0);
+          if (hit && hit.segments.length > 0) {
+            for (const segment of hit.segments) planned.push(segment);
+          }
+        }
+      }
     }
 
     if (planned.length === 0) return 0;
@@ -1892,7 +1949,7 @@
       for (const record of records) {
         const target = record.target;
         if (target && typeof target.closest === 'function' &&
-            target.closest('paper-dict-host, mark.paperdict-highlight')) {
+            target.closest('paper-dict-host, mark.paperdict-highlight, .pd-bilingual-trans, .pd-bilingual-loading, .pdf-html-trans, .pdf-page-bilingual')) {
           continue;
         }
         scheduleRestore();
@@ -1946,7 +2003,9 @@
     }
 
     for (const mark of marksToClear) unwrapMark(mark);
-    if (annoIdToClear && annotationManager) annotationManager.deleteAnnotation(annoIdToClear);
+    if (annoIdToClear && annotationManager) {
+      Promise.resolve(annotationManager.deleteAnnotation(annoIdToClear)).then(() => notifyAnnotationsChanged()).catch(() => {});
+    }
 
     currentActiveMarkEl = null;
     currentActiveAnnotationId = null;
@@ -1966,7 +2025,7 @@
       if (targets.length > 0) {
         for (const el of targets) el.dataset.color = colorKey;
         currentActiveMarkEl = targets[0];
-        annotationManager.saveAnnotation({
+        persistAnnotation({
           id: currentActiveAnnotationId,
           docKey: resolveDocKey(),
           docTitle: document.title,
@@ -1999,7 +2058,7 @@
       for (const el of targets) el.dataset.color = colorKey;
       currentActiveMarkEl = targets[0];
       currentActiveAnnotationId = annoId;
-      annotationManager.saveAnnotation({
+      persistAnnotation({
         id: annoId,
         docKey: resolveDocKey(),
         docTitle: document.title,
@@ -2037,7 +2096,7 @@
     currentActiveMarkEl = createdMarks[0];
     currentActiveAnnotationId = annoId;
 
-    annotationManager.saveAnnotation({
+    persistAnnotation({
       id: annoId,
       docKey: resolveDocKey(),
       docTitle: document.title,
@@ -2066,11 +2125,19 @@
       const annotations = await annotationManager.getAnnotationsForDoc(resolveDocKey());
       if (!annotations || annotations.length === 0) return;
 
+      const highlightCtx = resolveHighlightContext();
+      const restoreCtx = {
+        root: highlightCtx.root,
+        index: buildTextIndex(highlightCtx.root, { skipSelector: highlightCtx.skipSelector }),
+        normalizedIndex: null
+      };
+      if (!restoreCtx.index || !restoreCtx.index.text) return;
+
       for (const anno of annotations) {
         const hasText = anno.text && anno.text.length >= 2;
         const hasSegments = Array.isArray(anno.segments) && anno.segments.length > 0;
         if (!hasText && !hasSegments) continue;
-        restoreAnnotation(anno);
+        restoreAnnotation(anno, restoreCtx);
       }
     } catch (e) {
       console.warn('PaperDict highlight restore warning:', e);
@@ -2662,6 +2729,17 @@
     } catch (e) {
       console.warn('PaperDict citation extraction warning:', e);
     }
+  }
+
+  // The reader extracts per-page glossary terms and broadcasts them; adopt the
+  // terms here so "论文专属术语" lookups work inside the bundled PDF reader too.
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('paperdict:glossary-updated', (event) => {
+      const terms = event && event.detail ? event.detail.terms : null;
+      if (Array.isArray(terms) && terms.length > 0 && dictService && typeof dictService.setPaperGlossary === 'function') {
+        dictService.setPaperGlossary(terms);
+      }
+    });
   }
 
   function initializePageAddons() {

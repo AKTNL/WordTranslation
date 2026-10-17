@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "跨层改动的思考清单与『改值前先全局搜索』纪律"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务横跨 selection_anchor / content / reader 三层接口的数据流与默认行为约定"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 cleanPaperText 归一化规则与既有翻译管线的判断依据"}
+{"file": ".trellis/tasks/10-17-html-view-notes-parity/research/reader-view-interop-findings.md", "reason": "根因分析、设计决策 D1-D6、测试约束清单与关键文件索引"}

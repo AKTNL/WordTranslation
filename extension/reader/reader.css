@@ -130,6 +130,32 @@ body {
   font-size: 14px;
 }
 
+/* Bilingual translation blocks inside the reflowed HTML view */
+.pdf-html-trans {
+  background-color: #f8fafc;
+  border-left: 3px solid #3b82f6;
+  padding: 8px 12px;
+  border-radius: 0 6px 6px 0;
+  color: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+  font-size: 15px;
+  line-height: 1.75;
+  margin: -6px 0 15px;
+  text-align: justify;
+}
+
+/* 纯中文速读: hide the English paragraph once its translation is ready */
+.pdf-html-para.pdf-html-orig-hidden {
+  display: none;
+}
+
+/* Zoom controls stay grouped so the HTML text view can hide only them */
+.zoom-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .logo-wrapper {
   display: flex;
   align-items: center;

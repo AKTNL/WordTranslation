@@ -29,6 +29,8 @@ const readerJs = fs.readFileSync(path.join(__dirname, '../extension/reader/reade
 const readerHtml = fs.readFileSync(path.join(__dirname, '../extension/reader/reader.html'), 'utf8');
 const readerCss = fs.readFileSync(path.join(__dirname, '../extension/reader/reader.css'), 'utf8');
 const bilingualJs = fs.readFileSync(path.join(__dirname, '../extension/bilingual.js'), 'utf8');
+const selectionAnchorJs = fs.readFileSync(path.join(__dirname, '../extension/selection_anchor.js'), 'utf8');
+const readerModule = require('../extension/reader/reader.js');
 
 console.log('=== Running PaperDict Highlight, HTML View & Export Tests ===\n');
 
@@ -44,6 +46,8 @@ it('exports the new anchor helpers', () => {
   assert.equal(typeof selectionAnchor.splitRangeIntoSegments, 'function');
   assert.equal(typeof selectionAnchor.locateTextSegments, 'function');
   assert.equal(typeof selectionAnchor.normalizeWhitespace, 'function');
+  assert.equal(typeof selectionAnchor.normalizePaperMatch, 'function');
+  assert.equal(typeof selectionAnchor.normalizeTextIndex, 'function');
 });
 
 console.log('\n[Group 2: Translucent highlight styling]');
@@ -88,15 +92,17 @@ it('aborts without storing when nothing could be wrapped', () => {
   assert.match(contentJs, /if \(createdMarks\.length === 0\) return null;/);
 });
 it('clearing removes every segment mark of the annotation', () => {
-  assert.match(contentJs, /function queryAnnotationMarks\(annotationId\)/);
+  assert.match(contentJs, /function queryAnnotationMarks\(annotationId, root = null\)/);
   assert.match(contentJs, /for \(const mark of marksToClear\) unwrapMark\(mark\)/);
 });
 
 console.log('\n[Group 4: Refresh restore wiring]');
-it('restores cross-node annotations via a shared text index', () => {
-  assert.match(contentJs, /function restoreAnnotation\(anno\)/);
+it('restores cross-node annotations via a shared, view-scoped text index', () => {
+  assert.match(contentJs, /function restoreAnnotation\(anno, restoreCtx\)/);
   assert.match(contentJs, /findInTextIndex\(index, text, cursor\)/);
-  assert.match(contentJs, /buildTextIndex\(document\.body\)/);
+  assert.match(contentJs, /function resolveHighlightContext\(\)/);
+  assert.match(contentJs, /buildTextIndex\(highlightCtx\.root, \{ skipSelector: highlightCtx\.skipSelector \}\)/);
+  assert.match(contentJs, /queryAnnotationMarks\(anno\.id, restoreCtx\.root\)/);
 });
 it('re-runs restore on DOM mutation, debounced', () => {
   assert.match(contentJs, /new MutationObserver/);
@@ -135,6 +141,77 @@ it('toolbar and styles for the view switch exist', () => {
   assert.ok(readerHtml.includes('id="btn-view-page"'));
   assert.match(readerCss, /\.pdf-html-view \{/);
   assert.match(readerCss, /\.pdf-html-para \{/);
+});
+
+console.log('\n[Group 5b: View-scoped restore and cross-view matching]');
+it('scopes restore to the active view context', () => {
+  assert.match(contentJs, /function resolveHighlightContext\(\)/);
+  assert.match(contentJs, /window\.__paperDictHighlightContext/);
+  assert.match(readerJs, /window\.__paperDictHighlightContext = resolveHighlightRootContext/);
+  assert.match(readerJs, /skipSelector: '\.pdf-html-view'/);
+});
+it('falls back across reader views with normalized quotes', () => {
+  assert.match(contentJs, /normalizePaperMatch\(storedSegments\.join\(' '\)\)/);
+  assert.match(contentJs, /restoreCtx\.normalizedIndex = normalizeTextIndex\(index\)/);
+});
+it('normalizes typographic characters and hyphenated line breaks', () => {
+  assert.equal(selectionAnchor.normalizePaperMatch('“Trans-\nformer” – a model'), '"Transformer" - a model');
+  assert.equal(selectionAnchor.normalizePaperMatch('transla-\ntion of words'), 'translation of words');
+  assert.equal(selectionAnchor.normalizePaperMatch(null), '');
+  assert.equal(selectionAnchor.normalizePaperMatch('state-of-the-art'), 'state-of-the-art');
+});
+it('normalizes a text index while keeping node mappings', () => {
+  const fakeMap = 'ab- cd'.split('').map((ch, i) => ({ node: 'n1', index: i }));
+  const normalized = selectionAnchor.normalizeTextIndex({ text: 'ab- cd', map: fakeMap });
+  assert.equal(normalized.text, 'abcd');
+  assert.equal(normalized.map.length, normalized.text.length);
+  assert.equal(normalized.map[0].index, 0);
+  assert.equal(normalized.map[2].index, 4, 'character after the join keeps its original offset');
+  assert.equal(selectionAnchor.normalizeTextIndex(null), null);
+});
+
+console.log('\n[Group 5c: Reader notes interop and live refresh]');
+it('re-reads storage before listing notes and exporting', () => {
+  assert.match(readerJs, /async function updateReaderNotes\(\) \{[\s\S]{0,400}?await annotationManager\.loadAll\(\)/);
+  assert.match(readerJs, /await annotationManager\.loadAll\(\);\r?\n\s+const docKey = getReaderDocKey\(\)/);
+});
+it('content.js broadcasts annotation changes for in-page listeners', () => {
+  assert.match(contentJs, /function notifyAnnotationsChanged\(\)/);
+  assert.match(contentJs, /paperdict:annotations-changed/);
+  assert.match(readerJs, /window\.addEventListener\('paperdict:annotations-changed'/);
+});
+it('page mode re-restores highlights once pages re-render', () => {
+  assert.match(readerJs, /Promise\.all\(pending\)\.then\(\(\) => \{[\s\S]{0,160}?__paperDictRestoreHighlights\(80\)/);
+});
+it('glossary terms are broadcast from the reader to content lookups', () => {
+  assert.match(readerJs, /function broadcastPaperGlossary\(\)/);
+  assert.match(readerJs, /paperdict:glossary-updated/);
+  assert.match(contentJs, /paperdict:glossary-updated/);
+});
+
+console.log('\n[Group 5d: HTML view feature parity]');
+it('notes and glossary buttons stay available in HTML mode', () => {
+  assert.ok(readerHtml.includes('id="zoom-buttons"'));
+  assert.match(readerJs, /if \(zoomButtons\) zoomButtons\.style\.display = nextMode === 'page' \? 'inline-flex' : 'none';/);
+});
+it('HTML paragraphs get lazy bilingual blocks reusing the reader pipeline', () => {
+  assert.match(readerJs, /async function translateHtmlParagraph\(p, info\)/);
+  assert.match(readerJs, /div\.className = 'pdf-html-trans'/);
+  assert.match(readerJs, /reader_html_p\$\{info\.pageNumber/);
+  assert.match(readerJs, /function setupHtmlBilingualObserver\(\)/);
+  assert.match(readerJs, /function applyHtmlBilingualMode\(\)/);
+  assert.equal(typeof readerModule.translateHtmlParagraph, 'function');
+  assert.equal(readerModule.htmlParaItems instanceof Map, true);
+  assert.match(readerCss, /\.pdf-html-trans \{/);
+  assert.match(readerCss, /\.pdf-html-para\.pdf-html-orig-hidden \{/);
+});
+it('page navigation follows the reflowed view', () => {
+  assert.match(readerJs, /function setupHtmlPageObserver\(\)/);
+  assert.match(readerJs, /\.pdf-html-page\[data-page-number="\$\{p\}"\]/);
+});
+it('translation blocks are skipped by highlight matching', () => {
+  assert.match(selectionAnchorJs, /\.pdf-html-trans/);
+  assert.match(selectionAnchorJs, /\.pdf-page-bilingual/);
 });
 
 console.log('\n[Group 6: Unified Markdown export]');
@@ -244,6 +321,34 @@ async function runAsync() {
     assert.deepEqual(fetched[0].segments, ['a', 'b'], 'segments round-trip through storage');
     passed++; console.log('  ✓ PASS: highlight segments persist and survive updates');
   } catch (err) { failed++; console.error(`  ✗ FAIL: highlight segments persist and survive updates -> ${err.message}`); }
+
+  // Group 8: Reflowed-view paragraph translation (shared pipeline)
+  try {
+    const sent = [];
+    global.chrome = {
+      runtime: {
+        sendMessage: async (message) => {
+          sent.push(message);
+          return { success: true, translation: `译: ${message.text}` };
+        }
+      }
+    };
+    const transEl = { innerHTML: '', querySelector: () => null, style: {} };
+    const pStub = { classList: { add() {}, remove() {} }, parentNode: null };
+    const info = { orig: 'A reflowed paragraph.', status: 'idle', transEl, pageNumber: 2, index: 1 };
+    await readerModule.translateHtmlParagraph(pStub, info);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].type, 'TRANSLATE_ONLINE');
+    assert.match(sent[0].requestId, /^reader_html_p2_1_\d+$/);
+    assert.equal(info.status, 'done');
+    assert.equal(info.trans, '译: A reflowed paragraph.');
+    assert.equal(transEl.innerHTML, '译: A reflowed paragraph.');
+    passed++; console.log('  ✓ PASS: reflowed HTML paragraphs translate through the shared pipeline');
+  } catch (err) {
+    failed++; console.error(`  ✗ FAIL: reflowed HTML paragraph translation -> ${err.message}`);
+  } finally {
+    delete global.chrome;
+  }
 
   console.log('\n==============================');
   console.log(`Results: ${passed} passed, ${failed} failed`);

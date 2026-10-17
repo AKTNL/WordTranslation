@@ -141,15 +141,74 @@
     return String(value == null ? '' : value).replace(/[\s ]+/g, ' ').trim();
   }
 
-  const SKIP_ANCESTOR_SELECTOR = 'paper-dict-host, mark.paperdict-highlight, .pd-bilingual-trans, .pd-bilingual-loading, script, style, noscript, textarea';
+  // Mirror the typographic normalization applied by DictService.cleanPaperText
+  // so a quote stored from one reader view (raw PDF text layer) still matches
+  // the same passage in the other (de-hyphenated HTML paragraphs). Both sides
+  // of a comparison must run through this same function.
+  function normalizePaperMatch(value) {
+    return String(value == null ? '' : value)
+      .replace(/[‘’]/g, "'")
+      .replace(/[“”]/g, '"')
+      .replace(/[–—]/g, '-')
+      .replace(/([A-Za-z])-\s+([A-Za-z])/g, '$1$2')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // Produce a normalized copy of a text index using the same rules: typographic
+  // characters are replaced 1:1 (the map is untouched), and hyphenated line
+  // breaks drop the hyphen plus the whitespace that follows. Surviving entries
+  // still point at the original text nodes, so segments sliced from the
+  // normalized index can be wrapped directly.
+  function normalizeTextIndex(index) {
+    if (!index || typeof index.text !== 'string' || !Array.isArray(index.map)) return null;
+    const text = index.text
+      .replace(/[‘’]/g, "'")
+      .replace(/[“”]/g, '"')
+      .replace(/[–—]/g, '-');
+    const map = index.map;
+
+    let normalizedText = '';
+    const normalizedMap = [];
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (
+        ch === '-' && i > 0 && /[A-Za-z]/.test(text[i - 1]) &&
+        text[i + 1] === ' ' && i + 2 < text.length && /[A-Za-z]/.test(text[i + 2])
+      ) {
+        continue; // drop the hyphen that ended a broken line
+      }
+      if (
+        ch === ' ' && i > 1 && text[i - 1] === '-' &&
+        /[A-Za-z]/.test(text[i - 2]) && i + 1 < text.length && /[A-Za-z]/.test(text[i + 1])
+      ) {
+        continue; // drop the space that followed the dropped hyphen
+      }
+      normalizedText += ch;
+      normalizedMap.push(map[i]);
+    }
+    return { text: normalizedText, map: normalizedMap };
+  }
+
+  // `.pdf-html-trans` (reader reflowed-view translation blocks) and
+  // `.pdf-page-bilingual` (reader page-side translation panels) are generated
+  // duplicates of source text and must never be highlight targets.
+  const SKIP_ANCESTOR_SELECTOR = 'paper-dict-host, mark.paperdict-highlight, .pd-bilingual-trans, .pd-bilingual-loading, .pdf-html-trans, .pdf-page-bilingual, script, style, noscript, textarea';
 
   // Build a whitespace-normalized view of a subtree's text plus a per-character
   // map back to (node, offset). Block boundaries contribute a single space so a
   // stored quote that spanned two elements still matches after a reload.
-  function buildTextIndex(root) {
+  function buildTextIndex(root, options = {}) {
     if (!root) return null;
     const doc = root.ownerDocument || (root.nodeType === 9 ? root : null);
     if (!doc || typeof doc.createTreeWalker !== 'function') return null;
+
+    const extraSkipSelector = typeof options.skipSelector === 'string' ? options.skipSelector.trim() : '';
+    const shouldSkip = (parent) => {
+      if (!parent || typeof parent.closest !== 'function') return false;
+      if (parent.closest(SKIP_ANCESTOR_SELECTOR)) return true;
+      return Boolean(extraSkipSelector && parent.closest(extraSkipSelector));
+    };
 
     const map = [];
     let text = '';
@@ -160,7 +219,7 @@
     let node = walker.nextNode();
     while (node) {
       const parent = node.parentElement;
-      if (parent && !(parent.closest && parent.closest(SKIP_ANCESTOR_SELECTOR))) {
+      if (parent && !shouldSkip(parent)) {
         const value = node.nodeValue || '';
         if (value.length > 0) {
           if (lastParent && lastParent !== parent && text.length > 0 && text[text.length - 1] !== ' ') {
@@ -248,7 +307,9 @@
     buildTextIndex,
     findInTextIndex,
     locateTextSegments,
-    normalizeWhitespace
+    normalizeWhitespace,
+    normalizePaperMatch,
+    normalizeTextIndex
   };
   global.PaperDictSelectionAnchor = api;
   if (typeof module !== 'undefined' && module.exports) {

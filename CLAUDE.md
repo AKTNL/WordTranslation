@@ -9,7 +9,7 @@ PaperDict (package name `paper-dict`) is a Manifest V3 browser extension for Chr
 ## Commands
 
 ```bash
-npm test                    # full offline suite: 12 test files, run sequentially via `&&`
+npm test                    # full offline suite: 13 test files, run sequentially via `&&`
 node tests/test_extension.js            # run one suite directly
 node tests/test_ui_layout.js            # (any tests/test_*.js works this way)
 npm run test:diagnostics    # tests/test_full_diagnostics.js — end-to-end experience checks
@@ -48,7 +48,7 @@ When adding a module or a public function, wire up all three. Content-script loa
 - `dict_service.js` — text cleaning (PDF de-hyphenation, whitespace), lemmatization, and irregular-form resolution (`IRREGULAR_WORDS`).
 - `translation_service.js` — engine adapters with **strict routing**: a user-selected custom engine is used exclusively and never silently falls back to a public engine. Returns structured `{ success, code, error, engine }` failures.
 - `popup/` — settings UI, engine configuration, and `tab_bridge.js`, which re-injects content scripts into already-open tabs when enabling on demand.
-- `reader/` — PDF.js-based reader with viewport virtualization, two-column paragraph extraction, de-hyphenation, and its own bilingual controls.
+- `reader/` — PDF.js-based reader with viewport virtualization, two-column paragraph extraction, de-hyphenation, and its own bilingual controls. Two interchangeable views of the same document: the original PDF pages and a reflowed HTML text view. Annotations are shared across both views: the reader publishes `window.__paperDictHighlightContext` so content.js restores highlights into the visible view only, and matches cross-view quotes through the `normalizePaperMatch`/`normalizeTextIndex` helpers in `selection_anchor.js`. Bilingual / Chinese-only modes work in either view through the reader's own translation pipeline (lazy per-paragraph in HTML mode).
 - `glossary_service.js` / `glossary_extractor.js` — user glossary merge/lookup plus translation-token protection, and automatic detection of author-defined acronyms (e.g. `Low-Rank Adaptation (LoRA)`).
 - `annotation_manager.js` / `citation_parser.js` / `selection_anchor.js` — highlights with notes and Markdown export, in-text citation parsing and References indexing, and stable selection range anchoring.
 - `dict/academic_dict.json` + `dict/academic_dict.js` — the ~15,600-entry offline dictionary, duplicated as JSON (source) and JS (content-script global). Keep both in sync.
