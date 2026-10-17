@@ -21,6 +21,22 @@
     isSelectionNavigationKey
   } = globalThis.PaperDictSelectionAnchor;
 
+  const splitRangeIntoSegments = typeof globalThis.PaperDictSelectionAnchor.splitRangeIntoSegments === 'function'
+    ? globalThis.PaperDictSelectionAnchor.splitRangeIntoSegments
+    : () => [];
+  const buildTextIndex = typeof globalThis.PaperDictSelectionAnchor.buildTextIndex === 'function'
+    ? globalThis.PaperDictSelectionAnchor.buildTextIndex
+    : () => null;
+  const findInTextIndex = typeof globalThis.PaperDictSelectionAnchor.findInTextIndex === 'function'
+    ? globalThis.PaperDictSelectionAnchor.findInTextIndex
+    : () => null;
+  const normalizePaperMatch = typeof globalThis.PaperDictSelectionAnchor.normalizePaperMatch === 'function'
+    ? globalThis.PaperDictSelectionAnchor.normalizePaperMatch
+    : (value) => String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  const normalizeTextIndex = typeof globalThis.PaperDictSelectionAnchor.normalizeTextIndex === 'function'
+    ? globalThis.PaperDictSelectionAnchor.normalizeTextIndex
+    : () => null;
+
   // Default configuration
   let settings = {
     enabled: true,
@@ -118,6 +134,9 @@
         }
       }
 
+      // Re-apply saved highlights now that the page is active again.
+      scheduleRestore(200);
+
       if (!options.silent) {
         showPageToast('已开启当前页面划词与翻译 (选词即可查词)');
       }
@@ -149,6 +168,7 @@
     window.__paperDictPageActive = pageActive;
     window.__paperDictIsPageActive = () => pageActive;
     window.__paperDictSetPageActive = (val, opts) => setPageActive(val, opts);
+    window.__paperDictRestoreHighlights = (delay) => scheduleRestore(typeof delay === 'number' ? delay : 150);
   }
 
   function isBlacklisted() {
@@ -216,6 +236,12 @@
   const annotationManager = typeof AnnotationManager !== 'undefined' ? new AnnotationManager() : null;
   const glossaryExtractor = typeof GlossaryExtractor !== 'undefined' ? new GlossaryExtractor() : null;
   const citationParser = typeof CitationParser !== 'undefined' ? new CitationParser() : null;
+
+  // Highlight restore scheduling / mutation watching
+  let restoreTimer = null;
+  let highlightObserver = null;
+  let restoreInProgress = false;
+  let restorePending = false;
 
   // Create isolated Shadow DOM
   function setupShadowDOM() {
@@ -1650,7 +1676,7 @@
     if (btnCardExport && annotationManager) {
       btnCardExport.onclick = async (e) => {
         e.stopPropagation();
-        const docKey = AnnotationManager.getDocKey(window.location.href, document.title);
+        const docKey = resolveDocKey();
         const notes = await annotationManager.getAnnotationsForDoc(docKey);
         const terms = glossaryExtractor ? glossaryExtractor.getAllTerms() : [];
 
@@ -1712,82 +1738,305 @@
     }
   }
 
-  function clearCurrentHighlight() {
-    let markToClear = currentActiveMarkEl;
-    let annoIdToClear = currentActiveAnnotationId;
+  // --- Highlight helpers (shared by create / clear / restore) ---
 
-    if (!markToClear && lastActiveRange) {
-      const container = lastActiveRange.commonAncestorContainer;
-      markToClear = (container.nodeType === 1 ? container : container.parentElement)?.closest('.paperdict-highlight');
-      if (markToClear) {
-        annoIdToClear = markToClear.dataset.annotationId;
+  function cssEscape(value) {
+    if (typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function') return CSS.escape(value);
+    return String(value == null ? '' : value).replace(/["\\]/g, '\\$&');
+  }
+
+  const HIGHLIGHT_STYLE_ID = 'paperdict-highlight-styles';
+
+  // Inject a light-DOM stylesheet so highlights read as translucent marker pen
+  // instead of an opaque block (which otherwise covers PDF glyphs on the canvas).
+  function ensureHighlightStyles() {
+    if (typeof document === 'undefined' || !document.head || typeof document.createElement !== 'function') return;
+    if (typeof document.getElementById === 'function' && document.getElementById(HIGHLIGHT_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = HIGHLIGHT_STYLE_ID;
+    style.textContent = [
+      'mark.paperdict-highlight {',
+      '  background-color: rgba(254, 240, 138, 0.45);',
+      '  color: inherit;',
+      '  border-radius: 2px;',
+      '  padding: 0 1px;',
+      '  cursor: pointer;',
+      '  -webkit-box-decoration-break: clone;',
+      '  box-decoration-break: clone;',
+      '}',
+      'mark.paperdict-highlight[data-color="yellow"] { background-color: rgba(254, 240, 138, 0.45); }',
+      'mark.paperdict-highlight[data-color="green"]  { background-color: rgba(187, 247, 208, 0.45); }',
+      'mark.paperdict-highlight[data-color="blue"]   { background-color: rgba(191, 219, 254, 0.45); }',
+      'mark.paperdict-highlight[data-color="pink"]   { background-color: rgba(251, 207, 232, 0.45); }',
+      'mark.paperdict-highlight:hover { filter: brightness(0.95); }'
+    ].join('\n');
+    document.head.appendChild(style);
+  }
+
+  // The reader sets window.__paperDictDocKey once a PDF is loaded so annotations
+  // key off the real document, not the shared extension URL.
+  function resolveDocKey() {
+    if (typeof window !== 'undefined' && window.__paperDictDocKey) return window.__paperDictDocKey;
+    const href = (typeof window !== 'undefined' && window.location) ? window.location.href : '';
+    const title = (typeof document !== 'undefined' && document.title) ? document.title : '';
+    return AnnotationManager.getDocKey(href, title);
+  }
+
+  // The reader supplies a view-scoped context (see reader.js) so highlights are
+  // restored into the currently visible view instead of whichever copy of the
+  // text happens to come first in the document (PDF text layer vs reflowed HTML).
+  function resolveHighlightContext() {
+    const fallback = { root: document.body, skipSelector: '' };
+    if (typeof window !== 'undefined' && typeof window.__paperDictHighlightContext === 'function') {
+      try {
+        const ctx = window.__paperDictHighlightContext();
+        if (ctx && ctx.root && typeof document.contains === 'function' && document.contains(ctx.root)) {
+          return { root: ctx.root, skipSelector: typeof ctx.skipSelector === 'string' ? ctx.skipSelector : '' };
+        }
+      } catch (e) {}
+    }
+    return fallback;
+  }
+
+  // Let in-page listeners (the PDF reader) refresh notes counters immediately
+  // after a save or delete without polling chrome.storage.
+  function notifyAnnotationsChanged() {
+    if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+    try {
+      window.dispatchEvent(new CustomEvent('paperdict:annotations-changed', { detail: { docKey: resolveDocKey() } }));
+    } catch (e) {}
+  }
+
+  function persistAnnotation(data) {
+    const result = annotationManager.saveAnnotation(data);
+    Promise.resolve(result).then(() => notifyAnnotationsChanged()).catch(() => {});
+    return result;
+  }
+
+  function applyMarkStyle(mark, colorKey) {
+    mark.className = 'paperdict-highlight';
+    mark.dataset.color = colorKey || 'yellow';
+  }
+
+  function queryAnnotationMarks(annotationId, root = null) {
+    if (!annotationId || typeof document === 'undefined') return [];
+    const scope = (root && typeof root.querySelectorAll === 'function') ? root : document;
+    if (typeof scope.querySelectorAll !== 'function') return [];
+    try {
+      return Array.from(scope.querySelectorAll(`mark.paperdict-highlight[data-annotation-id="${cssEscape(annotationId)}"]`));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function unwrapMark(mark) {
+    const parent = mark && mark.parentNode;
+    if (!parent) return;
+    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+    parent.removeChild(mark);
+    if (typeof parent.normalize === 'function') parent.normalize();
+  }
+
+  function wrapSegment(segment, annotationId, colorKey) {
+    if (!segment || !segment.node) return null;
+    const range = document.createRange();
+    try {
+      range.setStart(segment.node, segment.start);
+      range.setEnd(segment.node, segment.end);
+    } catch (e) {
+      return null;
+    }
+    const mark = document.createElement('mark');
+    applyMarkStyle(mark, colorKey);
+    mark.dataset.annotationId = annotationId;
+    try {
+      range.surroundContents(mark);
+      return mark;
+    } catch (e) {
+      try {
+        const fragment = range.extractContents();
+        mark.appendChild(fragment);
+        range.insertNode(mark);
+        return mark;
+      } catch (err) {
+        return null;
+      }
+    }
+  }
+
+  // Re-apply one annotation to the live DOM. Matching is scoped to the current
+  // view's root (reader.js supplies it via __paperDictHighlightContext) so a
+  // mark is never wrapped into a hidden copy of the text. The shared indexes
+  // are built once per restore pass by restorePageHighlights.
+  function restoreAnnotation(anno, restoreCtx) {
+    if (!anno || !anno.id) return 0;
+    if (typeof document === 'undefined' || !document.body) return 0;
+    if (!restoreCtx || !restoreCtx.index) return 0;
+    if (queryAnnotationMarks(anno.id, restoreCtx.root).length > 0) return 0;
+
+    const storedSegments = (Array.isArray(anno.segments) && anno.segments.length > 0)
+      ? anno.segments.slice()
+      : (anno.text ? [anno.text] : []);
+    if (storedSegments.length === 0) return 0;
+
+    ensureHighlightStyles();
+
+    const index = restoreCtx.index;
+    if (!index || !index.text) return 0;
+
+    const singleSpan = storedSegments.length === 1;
+    const planned = [];
+    let cursor = 0;
+
+    for (const raw of storedSegments) {
+      const text = String(raw == null ? '' : raw).trim();
+      if (text.length < 2) continue;
+
+      let hit = findInTextIndex(index, text, cursor);
+      if (!hit && singleSpan) {
+        const prefix = text.slice(0, Math.max(16, Math.floor(text.length * 0.6)));
+        if (prefix.length >= 8) hit = findInTextIndex(index, prefix, 0);
+      }
+      if (!hit || hit.segments.length === 0) continue;
+
+      for (const segment of hit.segments) planned.push(segment);
+      cursor = hit.end;
+      if (singleSpan) break;
+    }
+
+    // Cross-view fallback: the quote may have been stored from the other
+    // reader view, whose text differs (de-hyphenated HTML paragraphs vs the
+    // raw PDF text layer). Retry against a normalized copy of the same index.
+    if (planned.length === 0) {
+      const needle = normalizePaperMatch(storedSegments.join(' '));
+      if (needle.length >= 2) {
+        if (!restoreCtx.normalizedIndex) restoreCtx.normalizedIndex = normalizeTextIndex(index);
+        const normalizedIndex = restoreCtx.normalizedIndex;
+        if (normalizedIndex && normalizedIndex.text) {
+          const hit = findInTextIndex(normalizedIndex, needle, 0);
+          if (hit && hit.segments.length > 0) {
+            for (const segment of hit.segments) planned.push(segment);
+          }
+        }
       }
     }
 
-    if (!markToClear && typeof window !== 'undefined') {
+    if (planned.length === 0) return 0;
+
+    // Wrap from the last segment backwards so wrapping does not shift the
+    // offsets of the segments still to be wrapped.
+    let created = 0;
+    for (let i = planned.length - 1; i >= 0; i--) {
+      if (wrapSegment(planned[i], anno.id, anno.color)) created++;
+    }
+    return created;
+  }
+
+  function scheduleRestore(delay = 400) {
+    if (typeof setTimeout !== 'function') return;
+    if (restoreTimer) clearTimeout(restoreTimer);
+    restoreTimer = setTimeout(() => {
+      restoreTimer = null;
+      restorePageHighlights();
+    }, delay);
+  }
+
+  function setupHighlightRestoreObserver() {
+    if (typeof MutationObserver === 'undefined' || typeof document === 'undefined' || !document.body) return;
+    if (highlightObserver) return;
+    highlightObserver = new MutationObserver((records) => {
+      if (restoreInProgress) return;
+      for (const record of records) {
+        const target = record.target;
+        if (target && typeof target.closest === 'function' &&
+            target.closest('paper-dict-host, mark.paperdict-highlight, .pd-bilingual-trans, .pd-bilingual-loading, .pdf-html-trans, .pdf-page-bilingual')) {
+          continue;
+        }
+        scheduleRestore();
+        return;
+      }
+    });
+    try {
+      highlightObserver.observe(document.body, { childList: true, subtree: true });
+    } catch (e) {
+      highlightObserver = null;
+    }
+  }
+
+  function clearCurrentHighlight() {
+    let annoIdToClear = currentActiveAnnotationId;
+    let marksToClear = queryAnnotationMarks(annoIdToClear);
+
+    if (marksToClear.length === 0 && currentActiveMarkEl) {
+      annoIdToClear = currentActiveMarkEl.dataset.annotationId || annoIdToClear;
+      marksToClear = queryAnnotationMarks(annoIdToClear);
+      if (marksToClear.length === 0) marksToClear = [currentActiveMarkEl];
+    }
+
+    if (marksToClear.length === 0 && lastActiveRange) {
+      const container = lastActiveRange.commonAncestorContainer;
+      const mark = (container.nodeType === 1 ? container : container.parentElement)?.closest('.paperdict-highlight');
+      if (mark) {
+        annoIdToClear = mark.dataset.annotationId || annoIdToClear;
+        marksToClear = queryAnnotationMarks(annoIdToClear);
+        if (marksToClear.length === 0) marksToClear = [mark];
+      }
+    }
+
+    if (marksToClear.length === 0 && typeof window !== 'undefined') {
       try {
         const sel = window.getSelection();
         if (sel && sel.rangeCount > 0) {
           const c = sel.getRangeAt(0).commonAncestorContainer;
-          markToClear = (c.nodeType === 1 ? c : c.parentElement)?.closest('.paperdict-highlight');
-          if (markToClear) {
-            annoIdToClear = markToClear.dataset.annotationId;
+          const mark = (c.nodeType === 1 ? c : c.parentElement)?.closest('.paperdict-highlight');
+          if (mark) {
+            annoIdToClear = mark.dataset.annotationId || annoIdToClear;
+            marksToClear = [mark];
           }
         }
       } catch (e) {}
     }
 
-    if (markToClear) {
-      const parent = markToClear.parentNode;
-      if (parent) {
-        while (markToClear.firstChild) {
-          parent.insertBefore(markToClear.firstChild, markToClear);
-        }
-        parent.removeChild(markToClear);
-        parent.normalize();
-      }
-
-      if (annoIdToClear && annotationManager) {
-        annotationManager.deleteAnnotation(annoIdToClear);
-      }
-
-      currentActiveMarkEl = null;
-      currentActiveAnnotationId = null;
-      lastActiveRange = null;
-      showActionFeedback('已清除高亮');
-      return true;
+    if (marksToClear.length === 0) {
+      showActionFeedback('无高亮可清除');
+      return false;
     }
-    showActionFeedback('无高亮可清除');
-    return false;
+
+    for (const mark of marksToClear) unwrapMark(mark);
+    if (annoIdToClear && annotationManager) {
+      Promise.resolve(annotationManager.deleteAnnotation(annoIdToClear)).then(() => notifyAnnotationsChanged()).catch(() => {});
+    }
+
+    currentActiveMarkEl = null;
+    currentActiveAnnotationId = null;
+    lastActiveRange = null;
+    showActionFeedback('已清除高亮');
+    return true;
   }
 
   function highlightCurrentRange(colorKey, noteText = '') {
-    const colors = (typeof window !== 'undefined' && window.HIGHLIGHT_COLORS) || {
-      yellow: { bg: '#fef08a' },
-      green:  { bg: '#bbf7d0' },
-      blue:   { bg: '#bfdbfe' },
-      pink:   { bg: '#fbcfe8' }
-    };
-    const colorBg = (colors[colorKey] && colors[colorKey].bg) || '#fef08a';
+    if (!annotationManager) return null;
+    ensureHighlightStyles();
 
-    // 1. If currently editing an existing mark, update in-place without re-wrapping!
-    if (currentActiveMarkEl && currentActiveAnnotationId) {
-      currentActiveMarkEl.dataset.color = colorKey;
-      currentActiveMarkEl.style.backgroundColor = colorBg;
-
-      if (annotationManager) {
-        const docKey = AnnotationManager.getDocKey(window.location.href, document.title);
-        annotationManager.saveAnnotation({
+    // 1. Update an existing active highlight in place (all of its segments).
+    if (currentActiveAnnotationId) {
+      let targets = queryAnnotationMarks(currentActiveAnnotationId);
+      if (targets.length === 0 && currentActiveMarkEl) targets = [currentActiveMarkEl];
+      if (targets.length > 0) {
+        for (const el of targets) el.dataset.color = colorKey;
+        currentActiveMarkEl = targets[0];
+        persistAnnotation({
           id: currentActiveAnnotationId,
-          docKey,
+          docKey: resolveDocKey(),
           docTitle: document.title,
           url: window.location.href,
-          text: currentActiveMarkEl.textContent,
+          text: targets.map(el => el.textContent).join(' '),
+          segments: targets.map(el => el.textContent),
           color: colorKey,
           note: noteText
         });
+        return currentActiveAnnotationId;
       }
-      return currentActiveAnnotationId;
     }
 
     let targetRange = lastActiveRange;
@@ -1799,151 +2048,105 @@
     }
     if (!targetRange) return null;
 
-    // 2. Check if range is already inside an existing highlight mark
+    // 2. Range already inside an existing highlight: recolor that whole annotation.
     const container = targetRange.commonAncestorContainer;
     const existingMark = (container.nodeType === 1 ? container : container.parentElement)?.closest('.paperdict-highlight');
     if (existingMark && existingMark.dataset.annotationId) {
-      currentActiveMarkEl = existingMark;
-      currentActiveAnnotationId = existingMark.dataset.annotationId;
-      existingMark.dataset.color = colorKey;
-      existingMark.style.backgroundColor = colorBg;
-      if (annotationManager) {
-        const docKey = AnnotationManager.getDocKey(window.location.href, document.title);
-        annotationManager.saveAnnotation({
-          id: currentActiveAnnotationId,
-          docKey,
-          docTitle: document.title,
-          url: window.location.href,
-          text: existingMark.textContent,
-          color: colorKey,
-          note: noteText
-        });
-      }
-      return currentActiveAnnotationId;
+      const annoId = existingMark.dataset.annotationId;
+      let targets = queryAnnotationMarks(annoId);
+      if (targets.length === 0) targets = [existingMark];
+      for (const el of targets) el.dataset.color = colorKey;
+      currentActiveMarkEl = targets[0];
+      currentActiveAnnotationId = annoId;
+      persistAnnotation({
+        id: annoId,
+        docKey: resolveDocKey(),
+        docTitle: document.title,
+        url: window.location.href,
+        text: targets.map(el => el.textContent).join(' '),
+        segments: targets.map(el => el.textContent),
+        color: colorKey,
+        note: noteText
+      });
+      return annoId;
     }
 
-    // 3. Brand new highlight
+    // 3. Brand new highlight: wrap each text-node segment of the range so
+    //    multi-line / cross-element selections also produce visible blocks.
+    const segments = splitRangeIntoSegments(targetRange)
+      .filter(seg => seg.node && seg.node.nodeValue && seg.node.nodeValue.slice(seg.start, seg.end).trim().length > 0);
+    if (segments.length === 0) return null;
+
     const annoId = `anno_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const createdMarks = [];
+    const segmentTexts = [];
+
+    for (const seg of segments) {
+      const text = seg.node.nodeValue.slice(seg.start, seg.end);
+      const mark = wrapSegment(seg, annoId, colorKey);
+      if (mark) {
+        createdMarks.push(mark);
+        segmentTexts.push(text);
+      }
+    }
+
+    // Nothing could be wrapped: leave DOM and store untouched.
+    if (createdMarks.length === 0) return null;
+
+    currentActiveMarkEl = createdMarks[0];
     currentActiveAnnotationId = annoId;
 
-    try {
-      const mark = document.createElement('mark');
-      mark.className = 'paperdict-highlight';
-      mark.dataset.annotationId = annoId;
-      mark.dataset.color = colorKey;
-      mark.style.backgroundColor = colorBg;
-      mark.style.color = 'inherit';
-      mark.style.borderRadius = '2px';
-      mark.style.padding = '0 2px';
-      mark.style.cursor = 'pointer';
-
-      try {
-        targetRange.surroundContents(mark);
-      } catch (e) {
-        try {
-          const frag = targetRange.extractContents();
-          mark.appendChild(frag);
-          targetRange.insertNode(mark);
-        } catch (err) {}
-      }
-      currentActiveMarkEl = mark;
-
-      if (annotationManager) {
-        const docKey = AnnotationManager.getDocKey(window.location.href, document.title);
-        annotationManager.saveAnnotation({
-          id: annoId,
-          docKey,
-          docTitle: document.title,
-          url: window.location.href,
-          text: mark.textContent || lastRawSelectedText || '',
-          color: colorKey,
-          note: noteText
-        });
-      }
-      return annoId;
-    } catch (err) {
-      console.warn('Highlight failed:', err);
-      return null;
-    }
+    persistAnnotation({
+      id: annoId,
+      docKey: resolveDocKey(),
+      docTitle: document.title,
+      url: window.location.href,
+      text: segmentTexts.join(' '),
+      segments: segmentTexts,
+      color: colorKey,
+      note: noteText
+    });
+    return annoId;
   }
 
-  // Restore saved highlights on the page
+  // Restore saved highlights for the current document
   async function restorePageHighlights() {
     if (!annotationManager) return;
     if (typeof window === 'undefined' || !document || !document.body) return;
+    if (!pageActive) return;
+    if (restoreInProgress) {
+      restorePending = true;
+      return;
+    }
 
+    restoreInProgress = true;
+    ensureHighlightStyles();
     try {
-      const docKey = AnnotationManager.getDocKey(window.location.href, document.title);
-      const annotations = await annotationManager.getAnnotationsForDoc(docKey);
+      const annotations = await annotationManager.getAnnotationsForDoc(resolveDocKey());
       if (!annotations || annotations.length === 0) return;
 
+      const highlightCtx = resolveHighlightContext();
+      const restoreCtx = {
+        root: highlightCtx.root,
+        index: buildTextIndex(highlightCtx.root, { skipSelector: highlightCtx.skipSelector }),
+        normalizedIndex: null
+      };
+      if (!restoreCtx.index || !restoreCtx.index.text) return;
+
       for (const anno of annotations) {
-        if (!anno.text || anno.text.length < 2) continue;
-        if (document.querySelector(`mark[data-annotation-id="${anno.id}"]`)) continue;
-        highlightTextInDocument(anno);
+        const hasText = anno.text && anno.text.length >= 2;
+        const hasSegments = Array.isArray(anno.segments) && anno.segments.length > 0;
+        if (!hasText && !hasSegments) continue;
+        restoreAnnotation(anno, restoreCtx);
       }
     } catch (e) {
       console.warn('PaperDict highlight restore warning:', e);
-    }
-  }
-
-  function highlightTextInDocument(anno) {
-    const textToFind = anno.text.trim();
-    if (!textToFind || textToFind.length < 2) return;
-
-    const colors = (typeof window !== 'undefined' && window.HIGHLIGHT_COLORS) || {
-      yellow: { bg: '#fef08a' },
-      green:  { bg: '#bbf7d0' },
-      blue:   { bg: '#bfdbfe' },
-      pink:   { bg: '#fbcfe8' }
-    };
-    const colorBg = (colors[anno.color] && colors[anno.color].bg) || '#fef08a';
-
-    const walker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode(node) {
-          const p = node.parentElement;
-          if (!p) return NodeFilter.FILTER_REJECT;
-          const tag = p.tagName.toLowerCase();
-          if (tag === 'script' || tag === 'style' || tag === 'mark' || tag === 'paper-dict-host') {
-            return NodeFilter.FILTER_REJECT;
-          }
-          if (node.nodeValue.includes(textToFind.slice(0, 20))) {
-            return NodeFilter.FILTER_ACCEPT;
-          }
-          return NodeFilter.FILTER_SKIP;
-        }
+    } finally {
+      restoreInProgress = false;
+      if (restorePending) {
+        restorePending = false;
+        scheduleRestore(350);
       }
-    );
-
-    let textNode = walker.nextNode();
-    while (textNode) {
-      const idx = textNode.nodeValue.indexOf(textToFind);
-      if (idx !== -1) {
-        const range = document.createRange();
-        range.setStart(textNode, idx);
-        range.setEnd(textNode, idx + textToFind.length);
-
-        const mark = document.createElement('mark');
-        mark.className = 'paperdict-highlight';
-        mark.dataset.annotationId = anno.id;
-        mark.dataset.color = anno.color;
-        mark.style.backgroundColor = colorBg;
-        mark.style.color = 'inherit';
-        mark.style.borderRadius = '2px';
-        mark.style.padding = '0 2px';
-        mark.style.cursor = 'pointer';
-
-        try {
-          range.surroundContents(mark);
-        } catch (e) {
-          // Ignore range split errors
-        }
-        break;
-      }
-      textNode = walker.nextNode();
     }
   }
 
@@ -2528,8 +2731,20 @@
     }
   }
 
+  // The reader extracts per-page glossary terms and broadcasts them; adopt the
+  // terms here so "论文专属术语" lookups work inside the bundled PDF reader too.
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('paperdict:glossary-updated', (event) => {
+      const terms = event && event.detail ? event.detail.terms : null;
+      if (Array.isArray(terms) && terms.length > 0 && dictService && typeof dictService.setPaperGlossary === 'function') {
+        dictService.setPaperGlossary(terms);
+      }
+    });
+  }
+
   function initializePageAddons() {
-    restorePageHighlights();
+    if (pageActive) restorePageHighlights();
+    setupHighlightRestoreObserver();
     extractAndRegisterGlossary();
     extractAndRegisterCitations();
   }

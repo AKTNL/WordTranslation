@@ -7,14 +7,80 @@
 (function () {
   'use strict';
 
+  // `bg` is a translucent fill so the highlighted text and any PDF glyphs behind
+  // it stay readable; `solid` is the opaque swatch used by the card palette.
   const HIGHLIGHT_COLORS = {
-    yellow: { key: 'yellow', bg: '#fef08a', border: '#facc15', label: '核心要点' },
-    green:  { key: 'green',  bg: '#bbf7d0', border: '#4ade80', label: '创新方法' },
-    blue:   { key: 'blue',   bg: '#bfdbfe', border: '#60a5fa', label: '重要结论' },
-    pink:   { key: 'pink',   bg: '#fbcfe8', border: '#f472b6', label: '疑问难点' }
+    yellow: { key: 'yellow', bg: 'rgba(254, 240, 138, 0.45)', solid: '#fef08a', border: '#facc15', label: '核心要点' },
+    green:  { key: 'green',  bg: 'rgba(187, 247, 208, 0.45)', solid: '#bbf7d0', border: '#4ade80', label: '创新方法' },
+    blue:   { key: 'blue',   bg: 'rgba(191, 219, 254, 0.45)', solid: '#bfdbfe', border: '#60a5fa', label: '重要结论' },
+    pink:   { key: 'pink',   bg: 'rgba(251, 207, 232, 0.45)', solid: '#fbcfe8', border: '#f472b6', label: '疑问难点' }
   };
 
   const STORAGE_KEY = 'paperdict_annotations';
+
+  const COLOR_TAGS = {
+    yellow: '核心要点',
+    green: '创新方法',
+    blue: '重要结论',
+    pink: '疑问难点'
+  };
+
+  function isoDate(ts, fallback) {
+    if (!ts) return fallback;
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? fallback : d.toISOString().slice(0, 10);
+  }
+
+  function escapeFrontmatter(value) {
+    return String(value == null ? '' : value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  }
+
+  function escapeMdText(value) {
+    return String(value == null ? '' : value).replace(/([\\`*_[\]<>])/g, '\\$1');
+  }
+
+  function collapseLines(value) {
+    return String(value == null ? '' : value).replace(/\s*\n+\s*/g, ' ').trim();
+  }
+
+  function escapeTableCell(value) {
+    return collapseLines(value).replace(/\|/g, '\\|');
+  }
+
+  function renderAnnotationItem(item, idx) {
+    const fallbackDate = new Date().toISOString().slice(0, 10);
+    const tag = COLOR_TAGS[item.color] || '要点';
+    const date = isoDate(item.createdAt, fallbackDate);
+    let out = `### ${idx + 1}. [${tag}] (${date})\n`;
+    out += `> ${escapeMdText(collapseLines(item.text))}\n\n`;
+    if (item.note) out += `**思考批注:**\n${collapseLines(item.note)}\n\n`;
+    if (item.pdfAnchor && item.pdfAnchor.pageNumber) {
+      out += `*论文位置: 第 ${item.pdfAnchor.pageNumber} 页*\n\n`;
+    }
+    out += `---\n\n`;
+    return out;
+  }
+
+  function renderGlossarySection(glossary) {
+    if (!Array.isArray(glossary) || glossary.length === 0) return '';
+    let out = `## 本篇论文专有术语与缩写表 (Paper Glossary)\n\n`;
+    out += `| 缩写 / 术语 | 英文全称 / 论文定义 | 出处例句 |\n| :--- | :--- | :--- |\n`;
+    for (const g of glossary) {
+      out += `| **${escapeTableCell(g.term || '')}** | ${escapeTableCell(g.definition || '')} | ${escapeTableCell(g.sentence || '')} |\n`;
+    }
+    return out + `\n---\n\n`;
+  }
+
+  function renderVocabularySection(vocabulary) {
+    if (!Array.isArray(vocabulary) || vocabulary.length === 0) return '';
+    let out = `## 重点查词与生词记录 (Vocabulary)\n\n`;
+    out += `| 单词 | 音标 | 释义 |\n| :--- | :--- | :--- |\n`;
+    for (const v of vocabulary) {
+      const ph = v.phonetic ? `/${escapeTableCell(v.phonetic)}/` : '-';
+      out += `| **${escapeTableCell(v.word || '')}** | ${ph} | ${escapeTableCell(v.translation || '')} |\n`;
+    }
+    return out + `\n---\n\n`;
+  }
 
   class AnnotationManager {
     constructor() {
@@ -26,8 +92,29 @@
      * Compute a canonical document key from URL or title
      */
     static getDocKey(url = '', title = '') {
-      if (!url && !title) return 'unknown_doc';
       const cleanUrl = String(url || '').trim();
+      const cleanTitle = String(title || '').trim();
+
+      // Reader pages are extension URLs shared by every PDF; identity must come
+      // from the ?file= target (or the document title), never the extension URL.
+      if (cleanUrl.startsWith('chrome-extension://') || /\/reader\/reader\.html(?:[?#]|$)/i.test(cleanUrl)) {
+        let fileUrl = '';
+        try {
+          fileUrl = new URL(cleanUrl).searchParams.get('file') || '';
+        } catch (e) {
+          fileUrl = '';
+        }
+        if (fileUrl) return AnnotationManager.getDocKey(fileUrl, '');
+        const strippedTitle = cleanTitle.replace(/\s*-\s*PaperDict\s*阅读器\s*$/i, '').trim();
+        if (/\.pdf$/i.test(strippedTitle)) return `pdf:${strippedTitle}`;
+        return `reader:${strippedTitle || 'untitled'}`;
+      }
+
+      // No URL at all: fall back to a PDF filename when the title looks like one.
+      if (!cleanUrl) {
+        if (/\.pdf$/i.test(cleanTitle)) return `pdf:${cleanTitle}`;
+        return cleanTitle || 'unknown_doc';
+      }
 
       // Check arXiv
       const arxivMatch = cleanUrl.match(/arxiv\.org\/(?:abs|pdf|html)\/([0-9]+\.[0-9]+(?:v[0-9]+)?)/i);
@@ -36,7 +123,7 @@
       }
 
       // Check local or web PDF
-      if (cleanUrl.toLowerCase().endsWith('.pdf') || cleanUrl.includes('.pdf?')) {
+      if (/\.pdf(?:$|[?#])/i.test(cleanUrl)) {
         try {
           const u = new URL(cleanUrl);
           const fname = u.pathname.split('/').pop();
@@ -47,12 +134,18 @@
         }
       }
 
-      // Check normal web URL: canonical origin + pathname
+      // Check normal web URL: canonical origin + pathname. When the pathname is
+      // only an index page, the query string carries the document identity.
       try {
         const u = new URL(cleanUrl);
-        return `${u.hostname}${u.pathname}`;
+        const base = `${u.hostname}${u.pathname}`;
+        const isIndexPath = /^\/(?:index\.(?:html?|php|aspx?))?$/i.test(u.pathname);
+        if (isIndexPath && u.search.length > 1) {
+          return `${base}${u.search}`;
+        }
+        return base;
       } catch (e) {
-        return cleanUrl.replace(/https?:\/\//i, '').split('#')[0].split('?')[0] || title || 'unknown_doc';
+        return cleanUrl.replace(/https?:\/\//i, '').split('#')[0].split('?')[0] || cleanTitle || 'unknown_doc';
       }
     }
 
@@ -115,6 +208,7 @@
         createdAt: existing.createdAt || now,
         updatedAt: now,
         anchor: data.anchor || null,
+        segments: Array.isArray(data.segments) ? data.segments : (existing.segments || null),
         pdfAnchor: data.pdfAnchor || null
       };
 
@@ -174,149 +268,82 @@
     }
 
     /**
-     * Export annotations to Markdown (compatible with Obsidian / Notion / Logseq)
-     * Supports single-paper structured notes and multi-paper knowledge-base digests
+     * Export annotations to Markdown (compatible with Obsidian / Notion / Logseq).
+     * One unified schema for every entry point: identical frontmatter keys, item
+     * format, escaping and ISO dates. Single-paper notes and multi-paper digests
+     * differ only in the document heading level.
      */
     static exportToMarkdown(annotations = [], docTitle = 'Paper Reading Notes', options = {}) {
-      if ((!annotations || annotations.length === 0) && (!options.glossary || options.glossary.length === 0)) {
+      const list = Array.isArray(annotations) ? annotations.slice() : [];
+      const glossary = Array.isArray(options.glossary) ? options.glossary : [];
+      const vocabulary = Array.isArray(options.vocabulary) ? options.vocabulary : [];
+
+      if (list.length === 0 && glossary.length === 0 && vocabulary.length === 0) {
         return `# ${docTitle}\n\n*暂无批注与高亮记录*\n`;
       }
 
-      const colorLabels = {
-        yellow: '核心要点',
-        green:  '创新方法',
-        blue:   '重要结论',
-        pink:   '疑问难点'
-      };
-
       const dateStr = new Date().toISOString().slice(0, 10);
-      const timeStr = new Date().toLocaleTimeString();
+      const timeStr = new Date().toTimeString().slice(0, 8);
 
-      // Check if annotations span multiple different documents
-      const uniqueDocs = new Set((annotations || []).map(a => a.docKey || a.docTitle).filter(Boolean));
-      const isMultiDoc = options.isMultiDoc || uniqueDocs.size > 1;
-
-      if (isMultiDoc) {
-        // Multi-Document Digest Export: group by document so papers are never jumbled!
-        const groupMap = new Map();
-        for (const item of (annotations || [])) {
-          const key = item.docKey || item.docTitle || 'other';
-          if (!groupMap.has(key)) {
-            groupMap.set(key, {
-              title: item.docTitle || '未命名文献',
-              url: item.url || '',
-              items: []
-            });
-          }
-          groupMap.get(key).items.push(item);
+      // Group by document. A single document collapses to one section.
+      const groups = new Map();
+      for (const item of list) {
+        const key = item.docKey || item.docTitle || 'other';
+        if (!groups.has(key)) {
+          groups.set(key, { title: item.docTitle || '未命名文献', url: item.url || '', items: [] });
         }
-
-        let md = `---\n`;
-        md += `title: "${docTitle.replace(/"/g, '\\"')}"\n`;
-        md += `export_tool: PaperDict\n`;
-        md += `date: ${dateStr}\n`;
-        md += `total_papers: ${groupMap.size}\n`;
-        md += `total_annotations: ${annotations.length}\n`;
-        md += `tags:\n  - academic\n  - literature-notes\n`;
-        md += `---\n\n`;
-
-        md += `# 学术文献阅读与批注集锦\n\n`;
-        md += `*导出工具: PaperDict 论文阅读助手 | 导出时间: ${dateStr} ${timeStr} | 共汇总 ${groupMap.size} 篇文献，${annotations.length} 条批注*\n\n`;
-        md += `---\n\n`;
-
-        let docIndex = 1;
-        for (const grp of groupMap.values()) {
-          md += `## ${docIndex++}. ${grp.title}\n\n`;
-          if (grp.url) {
-            md += `- **文献链接**: [${grp.url}](${grp.url})\n`;
-          }
-          md += `- **批注数量**: ${grp.items.length} 条\n\n`;
-
-          grp.items.forEach((item, idx) => {
-            const tag = colorLabels[item.color] || '要点';
-            const itemDate = item.createdAt ? new Date(item.createdAt).toLocaleDateString() : dateStr;
-            md += `### ${idx + 1}. [${tag}] (${itemDate})\n`;
-            md += `> ${item.text.replace(/\n+/g, ' ')}\n\n`;
-            if (item.note) {
-              md += `**思考批注:**\n${item.note}\n\n`;
-            }
-            if (item.pdfAnchor && item.pdfAnchor.pageNumber) {
-              md += `*论文位置: 第 ${item.pdfAnchor.pageNumber} 页*\n\n`;
-            }
-            md += `---\n\n`;
-          });
-        }
-
-        return md;
+        groups.get(key).items.push(item);
       }
+      const sortedGroups = Array.from(groups.values()).sort(
+        (a, b) => ((a.items[0] && a.items[0].createdAt) || 0) - ((b.items[0] && b.items[0].createdAt) || 0)
+      );
 
-      // Single Paper Comprehensive Reading Notes
-      const paperUrl = options.url || (annotations[0] && annotations[0].url) || '';
+      const isMultiDoc = options.isMultiDoc === true || sortedGroups.length > 1;
+      const title = docTitle || 'Paper Reading Notes';
+      const singleUrl = options.url || (sortedGroups[0] && sortedGroups[0].url) || '';
 
+      // Shared YAML frontmatter for both shapes.
       let md = `---\n`;
-      md += `title: "${(docTitle || 'Paper Reading Notes').replace(/"/g, '\\"')}"\n`;
-      if (paperUrl) md += `url: "${paperUrl}"\n`;
+      md += `title: "${escapeFrontmatter(title)}"\n`;
+      if (!isMultiDoc && singleUrl) md += `url: "${escapeFrontmatter(singleUrl)}"\n`;
+      md += `export_tool: PaperDict\n`;
       md += `date: ${dateStr}\n`;
-      md += `total_annotations: ${(annotations || []).length}\n`;
+      md += `total_papers: ${isMultiDoc ? sortedGroups.length : 1}\n`;
+      md += `total_annotations: ${list.length}\n`;
       md += `tags:\n  - paper-reading\n  - academic\n  - paperdict\n`;
       md += `---\n\n`;
 
-      md += `# 学术论文阅读笔记: ${docTitle}\n\n`;
-      if (paperUrl) {
-        md += `- **文献链接**: [${paperUrl}](${paperUrl})\n`;
-      }
-      md += `*导出工具: PaperDict 论文阅读助手 | 导出时间: ${dateStr} ${timeStr}*\n\n`;
-      md += `---\n\n`;
+      if (isMultiDoc) {
+        md += `# 学术文献阅读与批注集锦\n\n`;
+        md += `*导出工具: PaperDict 论文阅读助手 | 导出时间: ${dateStr} ${timeStr} | 共汇总 ${sortedGroups.length} 篇文献，${list.length} 条批注*\n\n`;
+        md += `---\n\n`;
 
-      if (annotations && annotations.length > 0) {
-        md += `## 批注与高亮精选 (${annotations.length} 条)\n\n`;
+        let docIndex = 1;
+        for (const grp of sortedGroups) {
+          md += `## ${docIndex++}. ${escapeMdText(grp.title)}\n\n`;
+          if (grp.url) md += `- **文献链接**: [${escapeMdText(grp.url)}](${grp.url})\n`;
+          md += `- **批注数量**: ${grp.items.length} 条\n\n`;
+          grp.items.forEach((item, idx) => {
+            md += renderAnnotationItem(item, idx);
+          });
+        }
+      } else {
+        md += `# 学术论文阅读笔记: ${escapeMdText(title)}\n\n`;
+        if (singleUrl) md += `- **文献链接**: [${escapeMdText(singleUrl)}](${singleUrl})\n`;
+        md += `*导出工具: PaperDict 论文阅读助手 | 导出时间: ${dateStr} ${timeStr}*\n\n`;
+        md += `---\n\n`;
 
-        annotations.forEach((item, idx) => {
-          const tag = colorLabels[item.color] || '高亮';
-          const time = item.createdAt ? new Date(item.createdAt).toLocaleDateString() : dateStr;
-          md += `### ${idx + 1}. [${tag}] (${time})\n`;
-          md += `> ${item.text.replace(/\n+/g, ' ')}\n\n`;
-
-          if (item.note) {
-            md += `**思考批注:**\n${item.note}\n\n`;
-          }
-
-          if (item.pdfAnchor && item.pdfAnchor.pageNumber) {
-            md += `*论文位置: 第 ${item.pdfAnchor.pageNumber} 页*\n\n`;
-          }
-
-          md += `---\n\n`;
-        });
-      }
-
-      // Paper-specific Glossary Table (if available)
-      if (options.glossary && Array.isArray(options.glossary) && options.glossary.length > 0) {
-        md += `## 本篇论文专有术语与缩写表 (Paper Glossary)\n\n`;
-        md += `| 缩写 / 术语 | 英文全称 / 论文定义 | 出处例句 |\n`;
-        md += `| :--- | :--- | :--- |\n`;
-        options.glossary.forEach(g => {
-          const t = g.term || '';
-          const d = (g.definition || '').replace(/\|/g, '\\|');
-          const s = (g.sentence || '').replace(/\n+/g, ' ').replace(/\|/g, '\\|');
-          md += `| **${t}** | ${d} | ${s} |\n`;
-        });
-        md += `\n---\n\n`;
+        const items = sortedGroups[0] ? sortedGroups[0].items : [];
+        if (items.length > 0) {
+          md += `## 批注与高亮精选 (${items.length} 条)\n\n`;
+          items.forEach((item, idx) => {
+            md += renderAnnotationItem(item, idx);
+          });
+        }
       }
 
-      // Vocabulary Table (if available)
-      if (options.vocabulary && Array.isArray(options.vocabulary) && options.vocabulary.length > 0) {
-        md += `## 重点查词与生词记录 (Vocabulary)\n\n`;
-        md += `| 单词 | 音标 | 释义 |\n`;
-        md += `| :--- | :--- | :--- |\n`;
-        options.vocabulary.forEach(v => {
-          const w = v.word || '';
-          const ph = v.phonetic ? `/${v.phonetic}/` : '-';
-          const tr = (v.translation || '').replace(/\n+/g, '；').replace(/\|/g, '\\|');
-          md += `| **${w}** | ${ph} | ${tr} |\n`;
-        });
-        md += `\n---\n\n`;
-      }
-
+      md += renderGlossarySection(glossary);
+      md += renderVocabularySection(vocabulary);
       return md;
     }
 
@@ -342,7 +369,7 @@
         const w = item.word || '';
         const ph = item.phonetic ? `/${item.phonetic}/` : '-';
         const trans = (item.translation || '').replace(/\n+/g, '；').replace(/\|/g, '\\|');
-        const date = item.date || item.createdAt ? new Date(item.date || item.createdAt).toLocaleDateString() : dateStr;
+        const date = isoDate(item.date || item.createdAt, dateStr);
         md += `| ${idx + 1} | **${w}** | ${ph} | ${trans} | ${date} |\n`;
       });
       return md;

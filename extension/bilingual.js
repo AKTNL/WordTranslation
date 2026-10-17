@@ -2087,6 +2087,11 @@
       // 3. Restore source visibility and refresh the capsule.
       this.applyDisplayModeToAll();
       this.updateCapsuleStats();
+
+      // The DOM rebuild above drops any highlight marks; re-apply saved ones.
+      if (typeof window !== 'undefined' && typeof window.__paperDictRestoreHighlights === 'function') {
+        window.__paperDictRestoreHighlights(300);
+      }
     }
 
     applyDisplayModeToAll() {
