@@ -80,6 +80,56 @@ body {
   border: 1px solid #3a3f44;
 }
 
+/* View Mode (page vs HTML text) */
+.toolbar-view {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Reflowed HTML text view: a normal DOM so selection, highlight & notes work */
+.pdf-html-view {
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 36px 32px 96px;
+  background: #ffffff;
+  color: #1e293b;
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 17px;
+  line-height: 1.9;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+  border-radius: 6px;
+}
+
+.pdf-html-page {
+  margin-bottom: 30px;
+}
+
+.pdf-html-page-marker {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  color: #94a3b8;
+  text-transform: uppercase;
+  border-bottom: 1px dashed #e2e8f0;
+  padding-bottom: 6px;
+  margin-bottom: 16px;
+}
+
+.pdf-html-para {
+  margin: 0 0 15px;
+  text-align: justify;
+}
+
+.pdf-html-loading {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  text-align: center;
+  color: #94a3b8;
+  padding: 64px 0;
+  font-size: 14px;
+}
+
 .logo-wrapper {
   display: flex;
   align-items: center;

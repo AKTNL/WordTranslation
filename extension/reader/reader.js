@@ -48,6 +48,25 @@
     } catch (e) {}
   }
   const annotationManager = typeof AnnotationManager !== 'undefined' ? new AnnotationManager() : null;
+  const btnViewPage = typeof document !== 'undefined' ? document.getElementById('btn-view-page') : null;
+  const btnViewHtml = typeof document !== 'undefined' ? document.getElementById('btn-view-html') : null;
+  const viewModeControls = typeof document !== 'undefined' ? document.getElementById('view-mode-controls') : null;
+  let currentViewMode = 'page'; // 'page' | 'html'
+  let htmlViewEl = null;
+  let htmlBuildToken = 0;
+
+  // Identity of the currently open PDF, shared with the content script so
+  // highlights and notes key off the real document instead of the reader URL.
+  function getReaderDocKey() {
+    if (typeof window !== 'undefined' && window.__paperDictDocKey) return window.__paperDictDocKey;
+    return AnnotationManager.getDocKey(window.location.href, docTitle.textContent);
+  }
+
+  function setReaderDocIdentity(name, url) {
+    if (typeof AnnotationManager === 'undefined') return;
+    const key = AnnotationManager.getDocKey(url || '', name || '');
+    if (typeof window !== 'undefined') window.__paperDictDocKey = key;
+  }
   const citationParser = typeof CitationParser !== 'undefined' ? new CitationParser() : null;
 
   // Reader Notes Elements
@@ -60,7 +79,7 @@
 
   async function updateReaderNotes() {
     if (!annotationManager) return;
-    const docKey = AnnotationManager.getDocKey(window.location.href, docTitle.textContent);
+    const docKey = getReaderDocKey();
     const notes = await annotationManager.getAnnotationsForDoc(docKey);
     if (readerNotesCount) readerNotesCount.textContent = notes.length;
 
@@ -103,7 +122,7 @@
   if (btnDrawerExportMd) {
     btnDrawerExportMd.addEventListener('click', async () => {
       if (!annotationManager) return;
-      const docKey = AnnotationManager.getDocKey(window.location.href, docTitle.textContent);
+      const docKey = getReaderDocKey();
       const notes = await annotationManager.getAnnotationsForDoc(docKey);
       const terms = glossaryExtractor ? glossaryExtractor.getAllTerms() : [];
       if (notes.length === 0 && terms.length === 0) return alert('本篇论文暂无可导出的批注或专有术语');
@@ -218,6 +237,7 @@
   function loadPdfFile(file) {
     docTitle.textContent = file.name;
     document.title = `${file.name} - PaperDict 阅读器`;
+    setReaderDocIdentity(file.name, '');
 
     const reader = new FileReader();
     reader.onload = function (ev) {
@@ -238,6 +258,7 @@
       }
       docTitle.textContent = fileName;
       document.title = `${fileName} - PaperDict 阅读器`;
+      setReaderDocIdentity(fileName, decodedUrl);
 
       welcomeDropzone.style.display = 'flex';
       viewerContainer.style.display = 'none';
@@ -303,8 +324,11 @@
       pageControls.style.display = 'inline-flex';
       zoomControls.style.display = 'inline-flex';
       if (bilingualControls) bilingualControls.style.display = 'inline-flex';
+      if (viewModeControls) viewModeControls.style.display = 'inline-flex';
 
+      resetHtmlView();
       pdfViewer.innerHTML = '';
+      htmlViewEl = null;
       pageParagraphsMap.clear();
       renderedPagesSet.clear();
       for (const [pNum, task] of pageRenderTasks.entries()) {
@@ -850,6 +874,120 @@
     }
   }
 
+  // ---- HTML 文本视图: 将 PDF 重排为可划词、可批注的 HTML 文档 ----
+  function ensureHtmlViewEl() {
+    if (htmlViewEl || !pdfViewer) return;
+    htmlViewEl = document.createElement('div');
+    htmlViewEl.id = 'pdf-html-view';
+    htmlViewEl.className = 'pdf-html-view';
+    htmlViewEl.style.display = 'none';
+    pdfViewer.appendChild(htmlViewEl);
+  }
+
+  function resetHtmlView() {
+    currentViewMode = 'page';
+    htmlBuildToken++;
+    if (htmlViewEl) {
+      htmlViewEl.innerHTML = '';
+      htmlViewEl.style.display = 'none';
+    }
+    if (btnViewPage) btnViewPage.classList.add('active');
+    if (btnViewHtml) btnViewHtml.classList.remove('active');
+  }
+
+  async function buildHtmlDocument() {
+    if (!currentPdfDoc) return;
+    const token = ++htmlBuildToken;
+    ensureHtmlViewEl();
+    if (!htmlViewEl) return;
+    htmlViewEl.innerHTML = '<div class="pdf-html-loading">正在将 PDF 转换为 HTML 文本视图...</div>';
+
+    const fragment = document.createDocumentFragment();
+    let paraCount = 0;
+
+    for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
+      if (token !== htmlBuildToken) return;
+      let textContent = null;
+      try {
+        const page = await currentPdfDoc.getPage(pageNumber);
+        textContent = await page.getTextContent();
+      } catch (e) {
+        continue;
+      }
+      if (token !== htmlBuildToken) return;
+
+      const paragraphs = clusterPdfTextIntoParagraphs(textContent);
+      const section = document.createElement('section');
+      section.className = 'pdf-html-page';
+      section.dataset.pageNumber = String(pageNumber);
+
+      const marker = document.createElement('div');
+      marker.className = 'pdf-html-page-marker';
+      marker.textContent = `第 ${pageNumber} 页`;
+      section.appendChild(marker);
+
+      paragraphs.forEach((paragraphText, index) => {
+        const p = document.createElement('p');
+        p.className = 'pdf-html-para';
+        p.dataset.pageNumber = String(pageNumber);
+        p.dataset.paraIndex = String(index);
+        p.textContent = paragraphText;
+        section.appendChild(p);
+        paraCount++;
+      });
+
+      fragment.appendChild(section);
+      if (pageNumber % 4 === 0) {
+        htmlViewEl.appendChild(fragment);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+
+    if (token !== htmlBuildToken) return;
+    htmlViewEl.appendChild(fragment);
+    if (paraCount === 0) {
+      htmlViewEl.innerHTML = '<div class="pdf-html-loading">（未能从该 PDF 提取到可读正文段落）</div>';
+    }
+  }
+
+  function setViewMode(mode) {
+    if (!currentPdfDoc) return;
+    const nextMode = mode === 'html' ? 'html' : 'page';
+    currentViewMode = nextMode;
+
+    if (btnViewPage) btnViewPage.classList.toggle('active', nextMode === 'page');
+    if (btnViewHtml) btnViewHtml.classList.toggle('active', nextMode === 'html');
+
+    const rows = document.querySelectorAll('.pdf-page-row');
+    rows.forEach((row) => { row.style.display = nextMode === 'page' ? '' : 'none'; });
+
+    if (pageControls) pageControls.style.display = nextMode === 'page' ? 'inline-flex' : 'none';
+    if (zoomControls) zoomControls.style.display = nextMode === 'page' ? 'inline-flex' : 'none';
+    if (bilingualControls) bilingualControls.style.display = nextMode === 'page' ? 'inline-flex' : 'none';
+
+    if (nextMode === 'html') {
+      ensureHtmlViewEl();
+      if (htmlViewEl) htmlViewEl.style.display = 'block';
+      if (readerBilingualStatus) {
+        readerBilingualStatus.textContent = 'HTML 文本视图 (支持划词查词与批注)';
+        readerBilingualStatus.style.color = '#4ade80';
+      }
+      buildHtmlDocument().then(() => {
+        if (typeof window !== 'undefined' && typeof window.__paperDictRestoreHighlights === 'function') {
+          window.__paperDictRestoreHighlights(150);
+        }
+      });
+    } else {
+      if (htmlViewEl) htmlViewEl.style.display = 'none';
+      updateZoomDisplay();
+      Array.from(renderedPagesSet).forEach((pageNumber) => renderPage(pageNumber));
+      if (currentBilingualMode !== 'original') translatePageParagraphs(currentPage);
+    }
+  }
+
+  if (btnViewPage) btnViewPage.addEventListener('click', () => setViewMode('page'));
+  if (btnViewHtml) btnViewHtml.addEventListener('click', () => setViewMode('html'));
+
   function setupBilingualObserver() {
     if (bilingualObserver) bilingualObserver.disconnect();
     if (typeof IntersectionObserver === 'undefined') return;
@@ -1032,6 +1170,8 @@
       pageParagraphsMap,
       renderPage,
       pageRenderTasks,
+      setViewMode,
+      resetHtmlView,
       setCurrentPdfDoc: (doc, count = 1) => {
         currentPdfDoc = doc;
         totalPages = count;

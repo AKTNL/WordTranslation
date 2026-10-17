@@ -39,6 +39,14 @@
       <span id="reader-bilingual-status" class="reader-status-badge">视口翻译就绪</span>
     </div>
 
+    <!-- View Mode: original PDF pages vs reflowed HTML text -->
+    <div class="toolbar-view" id="view-mode-controls" style="display: none;">
+      <div class="reader-mode-group">
+        <button id="btn-view-page" class="reader-mode-btn active" title="原版 PDF 页面排版">原版页面</button>
+        <button id="btn-view-html" class="reader-mode-btn" title="转换为可划词、可批注的 HTML 文本视图">HTML 文本</button>
+      </div>
+    </div>
+
     <div class="toolbar-right" id="zoom-controls" style="display: none;">
       <button id="btn-reader-glossary" class="tool-btn" title="查看本篇论文专属术语与缩写表">术语表 (<span id="reader-glossary-count">0</span>)</button>
       <button id="btn-reader-notes" class="tool-btn" title="查看与导出本篇论文笔记">论文笔记 (<span id="reader-notes-count">0</span>)</button>
